@@ -28,7 +28,11 @@ export const RegistrationDemoForm: React.FC<RegistrationDemoFormProps> = ({
   onRegisteredSuccess,
 }) => {
   const { events, registerTeam } = useRace();
-  const [selectedEventId, setSelectedEventId] = useState<string>(events[0]?.id || 'evt-01');
+  const publicEvents = events.filter((evt) => evt.visibility !== 'private');
+  
+  const [eventAccessMode, setEventAccessMode] = useState<'public' | 'private'>('public');
+  const [selectedEventId, setSelectedEventId] = useState<string>(publicEvents[0]?.id || events[0]?.id || 'evt-01');
+  const [privateCodeInput, setPrivateCodeInput] = useState<string>('');
   const [teamName, setTeamName] = useState<string>('');
   const [category, setCategory] = useState<string>('Korporat / Perusahaan');
   const [leaderName, setLeaderName] = useState<string>('');
@@ -36,6 +40,10 @@ export const RegistrationDemoForm: React.FC<RegistrationDemoFormProps> = ({
   const [leaderEmail, setLeaderEmail] = useState<string>('');
   const [organization, setOrganization] = useState<string>('');
   const [members, setMembers] = useState<string[]>(['', '']); // 2 default extra members
+
+  const matchedPrivateEvent = events.find(
+    (evt) => evt.eventCode && evt.eventCode.trim().toUpperCase() === privateCodeInput.trim().toUpperCase()
+  );
   
   // Registration result card state
   const [registrationResult, setRegistrationResult] = useState<{
@@ -57,6 +65,7 @@ export const RegistrationDemoForm: React.FC<RegistrationDemoFormProps> = ({
     leaderName?: string;
     leaderPhone?: string;
     leaderEmail?: string;
+    eventCode?: string;
   }>({});
 
   // Show inline success alert banner
@@ -81,7 +90,16 @@ export const RegistrationDemoForm: React.FC<RegistrationDemoFormProps> = ({
   };
 
   const validateForm = () => {
-    const newErrors: { teamName?: string; leaderName?: string; leaderPhone?: string; leaderEmail?: string } = {};
+    const newErrors: { teamName?: string; leaderName?: string; leaderPhone?: string; leaderEmail?: string; eventCode?: string } = {};
+
+    // 0. Validasi Event Akses Privat
+    if (eventAccessMode === 'private') {
+      if (!privateCodeInput.trim()) {
+        newErrors.eventCode = 'Harap masukkan Kode Event Privat Anda.';
+      } else if (!matchedPrivateEvent) {
+        newErrors.eventCode = `Kode Event "${privateCodeInput.trim()}" tidak ditemukan. Harap periksa kembali kode dari panitia.`;
+      }
+    }
 
     // 1. Validasi Nama Tim
     if (!teamName.trim()) {
@@ -116,13 +134,21 @@ export const RegistrationDemoForm: React.FC<RegistrationDemoFormProps> = ({
     // Jalankan validasi dasar
     const isValid = validateForm();
     if (!isValid) {
-      onShowToast('Pendaftaran belum lengkap: Harap lengkapi Nama Tim, Ketua, dan No. WhatsApp Anda.');
+      if (eventAccessMode === 'private' && !matchedPrivateEvent) {
+        onShowToast('Pendaftaran gagal: Kode Event Privat belum valid atau tidak ditemukan.');
+      } else {
+        onShowToast('Pendaftaran belum lengkap: Harap lengkapi Nama Tim, Ketua, dan No. WhatsApp Anda.');
+      }
       return;
     }
 
-    const event = events.find((evt) => evt.id === selectedEventId) || events[0];
+    const targetEventId = eventAccessMode === 'private' && matchedPrivateEvent 
+      ? matchedPrivateEvent.id 
+      : selectedEventId;
+
+    const event = events.find((evt) => evt.id === targetEventId) || matchedPrivateEvent || events[0];
     const registered = registerTeam({
-      eventId: selectedEventId,
+      eventId: targetEventId,
       name: teamName.trim(),
       category,
       leaderName: leaderName.trim(),
@@ -311,6 +337,7 @@ export const RegistrationDemoForm: React.FC<RegistrationDemoFormProps> = ({
                     <h5 className="font-extrabold text-red-900 text-sm">Pendaftaran Belum Lengkap</h5>
                     <p className="text-red-700 mt-0.5">Harap periksa dan lengkapi kolom yang wajib diisi:</p>
                     <ul className="list-disc list-inside mt-1.5 space-y-0.5 text-red-800 font-semibold text-[11px]">
+                      {errors.eventCode && <li><strong>Kode Event Privat:</strong> {errors.eventCode}</li>}
                       {errors.teamName && <li><strong>Nama Tim:</strong> {errors.teamName}</li>}
                       {errors.leaderName && <li><strong>Nama Ketua / Peserta:</strong> {errors.leaderName}</li>}
                       {errors.leaderPhone && <li><strong>No. WhatsApp / HP:</strong> {errors.leaderPhone}</li>}
@@ -331,25 +358,106 @@ export const RegistrationDemoForm: React.FC<RegistrationDemoFormProps> = ({
               {/* Grid 1: Event Selection & Category */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
                 <div>
-                  <label className="block text-xs font-bold text-slate-800 uppercase tracking-wider mb-1.5">
-                    Pilih Event yang Ingin Diikuti: <span className="text-red-500">*</span>
-                  </label>
-                  <div className="relative">
-                    <select
-                      value={selectedEventId}
-                      onChange={(e) => setSelectedEventId(e.target.value)}
-                      className="w-full bg-slate-50 border border-slate-300 text-slate-800 text-xs sm:text-sm font-medium rounded-xl p-3 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:bg-white transition-all cursor-pointer"
-                    >
-                      {events.map((evt) => (
-                        <option key={evt.id} value={evt.id}>
-                          {evt.title} ({evt.location.split(',')[0]})
-                        </option>
-                      ))}
-                    </select>
+                  <div className="flex items-center justify-between mb-1.5">
+                    <label className="block text-xs font-bold text-slate-800 uppercase tracking-wider">
+                      Pilih Event yang Ingin Diikuti: <span className="text-red-500">*</span>
+                    </label>
                   </div>
-                  <p className="text-[11px] text-slate-500 mt-1">
-                    Pilih salah satu event outdoor atau indoor yang aktif.
-                  </p>
+
+                  {/* Toggle Mode Event Akses: Publik vs Privat */}
+                  <div className="flex items-center gap-1.5 p-1 bg-slate-100 rounded-xl mb-2">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setEventAccessMode('public');
+                        if (publicEvents.length > 0 && !publicEvents.find(e => e.id === selectedEventId)) {
+                          setSelectedEventId(publicEvents[0].id);
+                        }
+                      }}
+                      className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        eventAccessMode === 'public'
+                          ? 'bg-white text-slate-900 shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      🌐 Event Publik ({publicEvents.length})
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setEventAccessMode('private')}
+                      className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all cursor-pointer ${
+                        eventAccessMode === 'private'
+                          ? 'bg-indigo-600 text-white shadow-xs'
+                          : 'text-slate-600 hover:text-slate-900'
+                      }`}
+                    >
+                      🔒 Kode Event Privat
+                    </button>
+                  </div>
+
+                  {eventAccessMode === 'public' ? (
+                    <div>
+                      <select
+                        value={selectedEventId}
+                        onChange={(e) => setSelectedEventId(e.target.value)}
+                        className="w-full bg-slate-50 border border-slate-300 text-slate-800 text-xs sm:text-sm font-medium rounded-xl p-3 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:bg-white transition-all cursor-pointer"
+                      >
+                        {publicEvents.map((evt) => (
+                          <option key={evt.id} value={evt.id}>
+                            {evt.title} ({evt.location.split(',')[0]})
+                          </option>
+                        ))}
+                      </select>
+                      <p className="text-[11px] text-slate-500 mt-1">
+                        Menampilkan event publik terpublikasi resmi.
+                      </p>
+                    </div>
+                  ) : (
+                    <div className="space-y-2">
+                      <div className="relative">
+                        <input
+                          type="text"
+                          value={privateCodeInput}
+                          onChange={(e) => {
+                            setPrivateCodeInput(e.target.value);
+                            if (errors.eventCode) setErrors((prev) => ({ ...prev, eventCode: undefined }));
+                          }}
+                          placeholder="Ketik Kode Event (misal: INDOOR-99, PRV-1234)..."
+                          className={`w-full bg-slate-50 border text-slate-900 font-mono font-bold uppercase text-xs sm:text-sm rounded-xl p-3 placeholder-slate-400 focus:outline-none focus:bg-white transition-all ${
+                            errors.eventCode
+                              ? 'border-red-500 ring-2 ring-red-400 bg-red-50/20'
+                              : 'border-indigo-300 focus:ring-2 focus:ring-indigo-500'
+                          }`}
+                        />
+                      </div>
+
+                      {/* Live feedback box for private code */}
+                      {matchedPrivateEvent ? (
+                        <div className="bg-emerald-50 border border-emerald-300 rounded-xl p-3 text-xs text-emerald-950 flex items-start gap-2.5 animate-in fade-in duration-150">
+                          <CheckCircle2 className="w-4 h-4 text-emerald-600 shrink-0 mt-0.5" />
+                          <div>
+                            <span className="font-extrabold text-emerald-900 block text-[11px] uppercase tracking-wider">
+                              ✓ Event Privat Ditemukan!
+                            </span>
+                            <strong className="text-emerald-950 text-sm block mt-0.5">{matchedPrivateEvent.title}</strong>
+                            <span className="text-[11px] text-emerald-800 block">
+                              📍 {matchedPrivateEvent.location} • Penyelenggara: {matchedPrivateEvent.organizerName}
+                            </span>
+                          </div>
+                        </div>
+                      ) : privateCodeInput.trim().length > 0 ? (
+                        <div className="bg-red-50 border border-red-200 rounded-xl p-2.5 text-[11px] text-red-800 flex items-center gap-2">
+                          <AlertCircle className="w-4 h-4 text-red-600 shrink-0" />
+                          <span>Kode Event "{privateCodeInput}" tidak ditemukan. Pastikan kode sama persis dengan yang diberikan panitia.</span>
+                        </div>
+                      ) : (
+                        <div className="bg-indigo-50/80 border border-indigo-200 rounded-xl p-2.5 text-[11px] text-indigo-900 flex items-center gap-2">
+                          <AlertCircle className="w-4 h-4 text-indigo-600 shrink-0" />
+                          <span>Masukkan kode event dari panitia. Coba kode demo event privat: <strong className="font-mono text-indigo-950">INDOOR-99</strong></span>
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
 
                 <div>

@@ -171,7 +171,7 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
       <div className="bg-[#0b192c] rounded-2xl p-6 text-white shadow-lg border border-slate-800">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
           <div className="space-y-2">
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-2">
               <span className={`px-2.5 py-0.5 rounded-full text-xs font-bold uppercase border ${
                 event.status === 'active' 
                   ? 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30'
@@ -181,6 +181,17 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
               }`}>
                 {event.status === 'active' ? '● Sedang Berlangsung' : event.status === 'draft' ? 'Konsep Draft' : 'Selesai'}
               </span>
+
+              {event.visibility === 'private' ? (
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-extrabold bg-indigo-500/30 text-indigo-300 border border-indigo-400/40 flex items-center gap-1.5">
+                  🔒 Private Event • Kode: <span className="font-mono text-white underline">{event.eventCode || 'PRV'}</span>
+                </span>
+              ) : (
+                <span className="px-2.5 py-0.5 rounded-full text-xs font-semibold bg-slate-800 text-slate-300 border border-slate-700">
+                  🌐 Publish Event (Publik)
+                </span>
+              )}
+
               <span className="text-xs text-slate-400 font-medium">
                 Penyelenggara: {event.organizerName}
               </span>

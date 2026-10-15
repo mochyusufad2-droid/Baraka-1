@@ -83,7 +83,7 @@ export const SimulationModePanel: React.FC<SimulationModePanelProps> = ({
   };
 
   // Handler: Simulate QR Scan
-  const handleSimulateQrScan = (e: React.FormEvent) => {
+  const handleSimulateQrScan = async (e: React.FormEvent) => {
     e.preventDefault();
     const team = teams.find((t) => t.id === qrSelectedTeamId);
     if (!team) {
@@ -93,14 +93,14 @@ export const SimulationModePanel: React.FC<SimulationModePanelProps> = ({
 
     let res;
     if (qrManualCode.trim()) {
-      res = checkInByQrCode(team.id, qrManualCode.trim(), qrBypassCooldown);
+      res = await checkInByQrCode(team.id, qrManualCode.trim(), qrBypassCooldown);
     } else {
       const cp = checkpoints.find((c) => c.id === qrSelectedCpId);
       if (!cp) {
         onShowToast('Pos checkpoint tidak ditemukan.');
         return;
       }
-      res = checkInCheckpoint(team.id, cp.id, qrBypassCooldown);
+      res = await checkInCheckpoint(team.id, cp.id, qrBypassCooldown);
     }
 
     const updatedTeam = teams.find((t) => t.id === team.id);
@@ -192,12 +192,12 @@ export const SimulationModePanel: React.FC<SimulationModePanelProps> = ({
   };
 
   // Handler: Random 1 Scan QR
-  const handleRandomScan = () => {
+  const handleRandomScan = async () => {
     if (teams.length === 0 || checkpoints.length === 0) return;
     const randomTeam = teams[Math.floor(Math.random() * teams.length)];
     const randomCp = checkpoints[Math.floor(Math.random() * checkpoints.length)];
 
-    const res = checkInCheckpoint(randomTeam.id, randomCp.id, true);
+    const res = await checkInCheckpoint(randomTeam.id, randomCp.id, true);
     const updatedTeam = teams.find((t) => t.id === randomTeam.id);
     const timeNow = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' WIB';
 
@@ -252,10 +252,10 @@ export const SimulationModePanel: React.FC<SimulationModePanelProps> = ({
     if (teams.length === 0 || checkpoints.length === 0) return;
     
     let simulatedCount = 0;
-    const interval = setInterval(() => {
+    const interval = setInterval(async () => {
       const team = teams[Math.floor(Math.random() * teams.length)];
       const cp = checkpoints[Math.floor(Math.random() * checkpoints.length)];
-      checkInCheckpoint(team.id, cp.id, true);
+      await checkInCheckpoint(team.id, cp.id, true);
       triggerHighlight(team.id);
 
       simulatedCount++;
@@ -409,8 +409,8 @@ export const SimulationModePanel: React.FC<SimulationModePanelProps> = ({
                     }}
                     className="w-full px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-semibold text-slate-900 focus:outline-none focus:ring-2 focus:ring-orange-500"
                   >
-                    {checkpoints.map((cp) => (
-                      <option key={cp.id} value={cp.id}>
+                    {checkpoints.map((cp, idx) => (
+                      <option key={`${cp.id}-${idx}`} value={cp.id}>
                         {cp.name} ({cp.points} Poin) - Kode: {cp.qrCodeValue}
                       </option>
                     ))}
@@ -726,7 +726,7 @@ export const SimulationModePanel: React.FC<SimulationModePanelProps> = ({
 
               return (
                 <div
-                  key={t.id}
+                  key={`${t.id}-${idx}`}
                   className={`p-3 rounded-xl border text-xs transition-all duration-300 flex items-center justify-between gap-3 ${
                     isHighlighted
                       ? 'bg-amber-100/90 border-amber-500 shadow-md ring-2 ring-amber-400 scale-[1.01]'

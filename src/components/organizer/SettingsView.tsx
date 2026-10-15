@@ -20,6 +20,89 @@ import {
 } from 'lucide-react';
 import { useRace } from '../../context/RaceContext';
 
+const PasswordManagementSection: React.FC<{ onShowToast: (msg: string) => void }> = ({ onShowToast }) => {
+  const { adminPassword, judgePassword, updateRolePasswords } = useRace();
+  const [newAdminPass, setNewAdminPass] = useState(adminPassword);
+  const [newJudgePass, setNewJudgePass] = useState(judgePassword);
+  const [showAdminPass, setShowAdminPass] = useState(false);
+  const [showJudgePass, setShowJudgePass] = useState(false);
+
+  useEffect(() => {
+    setNewAdminPass(adminPassword);
+    setNewJudgePass(judgePassword);
+  }, [adminPassword, judgePassword]);
+
+  const handleSavePasswords = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newAdminPass.trim() || !newJudgePass.trim()) {
+      onShowToast('❌ Password tidak boleh kosong!');
+      return;
+    }
+    updateRolePasswords(newAdminPass, newJudgePass);
+    onShowToast('🔑 Password Panitia (Admin) dan Juri Pos berhasil diperbarui!');
+  };
+
+  return (
+    <div className="pt-3 border-t border-slate-200 space-y-3">
+      <div className="flex items-center gap-2">
+        <Lock className="w-4 h-4 text-orange-600" />
+        <label className="font-extrabold text-slate-900 text-xs">
+          Pengaturan Password Akses Role (RBAC):
+        </label>
+      </div>
+
+      <form onSubmit={handleSavePasswords} className="space-y-3 p-3 rounded-xl bg-orange-50/50 border border-orange-200/80">
+        <div className="space-y-1">
+          <label className="text-[11px] font-bold text-slate-700">Password Panitia / Admin (Organizer):</label>
+          <div className="relative">
+            <input
+              type={showAdminPass ? 'text' : 'password'}
+              value={newAdminPass}
+              onChange={(e) => setNewAdminPass(e.target.value)}
+              className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-orange-500"
+              required
+            />
+            <button
+              type="button"
+              onClick={() => setShowAdminPass(!showAdminPass)}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-[10px] font-bold cursor-pointer"
+            >
+              {showAdminPass ? 'Sembunyi' : 'Lihat'}
+            </button>
+          </div>
+        </div>
+
+        <div className="space-y-1">
+          <label className="text-[11px] font-bold text-slate-700">Password Juri Pos / Fasilitator:</label>
+          <div className="relative">
+            <input
+              type={showJudgePass ? 'text' : 'password'}
+              value={newJudgePass}
+              onChange={(e) => setNewJudgePass(e.target.value)}
+              className="w-full px-3 py-1.5 bg-white border border-slate-300 rounded-lg text-xs font-mono text-slate-900 focus:outline-none focus:ring-2 focus:ring-orange-500"
+              required
+            />
+            <button
+              type="button"
+              onClick={() => setShowJudgePass(!showJudgePass)}
+              className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 text-[10px] font-bold cursor-pointer"
+            >
+              {showJudgePass ? 'Sembunyi' : 'Lihat'}
+            </button>
+          </div>
+        </div>
+
+        <button
+          type="submit"
+          className="w-full py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-bold transition-all cursor-pointer shadow-sm"
+        >
+          Simpan Password Baru
+        </button>
+      </form>
+    </div>
+  );
+};
+
 interface SettingsViewProps {
   onShowToast: (msg: string) => void;
 }
@@ -682,6 +765,9 @@ export const SettingsView: React.FC<SettingsViewProps> = ({ onShowToast }) => {
                 Verifikasi Juri Pos Wajib untuk Pos Tertentu
               </label>
             </div>
+
+            {/* Password & RBAC Management Sub-section */}
+            <PasswordManagementSection onShowToast={onShowToast} />
 
             {/* Reset Data Button */}
             <div className="pt-3 border-t border-slate-100 space-y-2">

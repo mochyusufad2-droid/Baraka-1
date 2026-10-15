@@ -187,9 +187,9 @@ export const TeamsView: React.FC<TeamsViewProps> = ({
 
       {/* Teams Grid */}
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-5">
-        {filteredTeams.map((team) => (
+        {filteredTeams.map((team, index) => (
           <div 
-            key={team.id}
+            key={`${team.id}-${index}`}
             className="bg-white rounded-2xl border border-slate-200 shadow-sm hover:border-orange-300 transition-all p-5 flex flex-col justify-between group"
           >
             <div>

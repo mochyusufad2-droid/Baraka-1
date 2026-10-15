@@ -701,9 +701,9 @@ export const InteractiveCheckpointMap: React.FC<InteractiveCheckpointMapProps> =
                 </div>
 
                 <div className="space-y-1.5 max-h-64 overflow-y-auto pr-1">
-                  {checkpoints.map((cp) => (
+                  {checkpoints.map((cp, idx) => (
                     <div
-                      key={cp.id}
+                      key={`${cp.id}-${idx}`}
                       className="p-2.5 rounded-xl bg-slate-50 border border-slate-200 flex items-center justify-between text-xs hover:border-orange-300 transition-colors"
                     >
                       <div className="space-y-0.5 truncate pr-2">

@@ -158,9 +158,9 @@ export const ChallengesView: React.FC<ChallengesViewProps> = ({ onShowToast }) =
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-          {filteredCheckpoints.map((cp) => (
+          {filteredCheckpoints.map((cp, idx) => (
             <div
-              key={cp.id}
+              key={`${cp.id}-${idx}`}
               className="p-4 rounded-xl border border-slate-200 bg-slate-50/50 flex flex-col justify-between space-y-3"
             >
               <div>
@@ -234,9 +234,9 @@ export const ChallengesView: React.FC<ChallengesViewProps> = ({ onShowToast }) =
         </div>
 
         <div className="space-y-3">
-          {submissions.map((sub) => (
+          {submissions.map((sub, index) => (
             <div 
-              key={sub.id}
+              key={`${sub.id}-${index}`}
               className="p-4 rounded-xl border border-slate-200 bg-slate-50/60 flex flex-col sm:flex-row sm:items-center justify-between gap-3"
             >
               <div className="space-y-1.5">
@@ -402,9 +402,9 @@ export const ChallengesView: React.FC<ChallengesViewProps> = ({ onShowToast }) =
                 </div>
               ) : (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
-                  {filteredGallerySubmissions.map((sub) => (
+                  {filteredGallerySubmissions.map((sub, index) => (
                     <div 
-                      key={sub.id}
+                      key={`${sub.id}-${index}`}
                       className="bg-white rounded-2xl border border-slate-200 overflow-hidden shadow-sm hover:shadow-md transition-shadow flex flex-col justify-between"
                     >
                       <div>

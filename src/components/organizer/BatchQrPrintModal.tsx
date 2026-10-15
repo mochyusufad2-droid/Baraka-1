@@ -342,11 +342,11 @@ export const BatchQrPrintModal: React.FC<BatchQrPrintModalProps> = ({
 
                 {/* Checklist List */}
                 <div className="max-h-36 overflow-y-auto space-y-1 pr-1 border border-slate-100 rounded-xl p-1.5 bg-slate-50/50">
-                  {filteredCheckpoints.map((cp) => {
+                  {filteredCheckpoints.map((cp, idx) => {
                     const isSelected = selectedIds.has(cp.id);
                     return (
                       <div
-                        key={cp.id}
+                        key={`${cp.id}-${idx}`}
                         onClick={() => toggleCheckpoint(cp.id)}
                         className={`px-2.5 py-1.5 rounded-lg text-xs flex items-center justify-between cursor-pointer transition-all ${
                           isSelected 
@@ -632,13 +632,13 @@ export const BatchQrPrintModal: React.FC<BatchQrPrintModalProps> = ({
                 ) : (
                   /* Cards Grid */
                   <div className={`grid gap-4 sm:gap-5 ${getGridClasses()}`}>
-                    {printableCheckpoints.map((cp) => {
+                    {printableCheckpoints.map((cp, idx) => {
                       const qrUrl = qrMap[cp.id];
                       const isCompact = layoutColumns === 'grid-3' || layoutColumns === 'grid-4';
 
                       return (
                         <div
-                          key={cp.id}
+                          key={`${cp.id}-${idx}`}
                           className={`relative p-4 rounded-2xl flex flex-col items-center justify-between text-center transition-all print-card-break-avoid ${
                             showCutGuides 
                               ? 'border-2 border-dashed border-slate-300 hover:border-orange-400' 
@@ -801,13 +801,13 @@ export const BatchQrPrintModal: React.FC<BatchQrPrintModalProps> = ({
 
           {/* Sticker Grid for Print */}
           <div className={`grid gap-4 ${getPrintGridClasses()}`}>
-            {printableCheckpoints.map((cp) => {
+            {printableCheckpoints.map((cp, idx) => {
               const qrUrl = qrMap[cp.id];
               const isCompact = layoutColumns === 'grid-3' || layoutColumns === 'grid-4';
 
               return (
                 <div
-                  key={cp.id}
+                  key={`${cp.id}-${idx}`}
                   className={`relative p-3.5 rounded-xl flex flex-col items-center justify-between text-center print-card-break-avoid bg-white ${
                     showCutGuides 
                       ? 'border border-dashed border-gray-400' 

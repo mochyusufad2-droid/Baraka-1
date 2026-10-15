@@ -17,6 +17,8 @@ import { Team } from '../../types';
 import { FinisherCertificateModal } from '../common/FinisherCertificateModal';
 import { LeaderboardPdfReportModal } from '../leaderboard/LeaderboardPdfReportModal';
 
+import { exportLeaderboardToExcel, exportLeaderboardToCsv } from '../../utils/exportLeaderboard';
+
 interface ResultsViewProps {
   onOpenLeaderboard: () => void;
   onShowToast: (msg: string) => void;
@@ -37,45 +39,20 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
   const runnerUp = sortedTeams[1];
   const thirdPlace = sortedTeams[2];
 
+  const handleExportExcel = () => {
+    try {
+      const fileName = exportLeaderboardToExcel(sortedTeams, events[0], 'all');
+      onShowToast(`📊 File Excel (.XLSX) "${fileName}" berhasil diunduh!`);
+    } catch (err) {
+      console.error('Failed to export Excel:', err);
+      onShowToast('Gagal mengunduh Excel. Mengalihkan ke CSV...');
+      handleExportCsv();
+    }
+  };
+
   const handleExportCsv = () => {
-    const headers = [
-      'Peringkat', 
-      'Nomor_BIB', 
-      'Nama_Tim', 
-      'Kategori', 
-      'Pos_Selesai', 
-      'Poin_Dasar', 
-      'Bonus_Juri', 
-      'Penalti', 
-      'Total_Skor', 
-      'Durasi_Menit'
-    ];
-
-    const rows = sortedTeams.map((t, idx) => [
-      idx + 1,
-      `"${t.bibNumber}"`,
-      `"${t.name.replace(/"/g, '""')}"`,
-      `"${t.category.replace(/"/g, '""')}"`,
-      `"${t.checkpointsCompleted}/${t.totalCheckpoints}"`,
-      t.points,
-      t.bonusPoints,
-      t.penaltyPoints,
-      t.totalScore,
-      t.durationMinutes
-    ]);
-
-    const csvContent = [headers.join(','), ...rows.map(r => r.join(','))].join('\n');
-    const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', `Hasil_Lomba_Orienteering_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-
-    onShowToast('File Rekap Hasil Lomba (.CSV) berhasil diunduh!');
+    const fileName = exportLeaderboardToCsv(sortedTeams, events[0], 'all');
+    onShowToast(`📑 File CSV "${fileName}" berhasil diunduh!`);
   };
 
   const handleOpenCertificate = (team: Team, rank?: number) => {
@@ -109,15 +86,24 @@ export const ResultsView: React.FC<ResultsViewProps> = ({
             <span>Layar Penuh</span>
           </button>
           <button
-            onClick={handleExportCsv}
-            className="px-4 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/20 flex items-center gap-1.5 cursor-pointer transition-colors"
+            onClick={handleExportExcel}
+            className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-700 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/20 flex items-center gap-1.5 cursor-pointer transition-colors"
+            title="Ekspor rekap data ke spreadsheet Excel (.xlsx)"
           >
-            <Download className="w-3.5 h-3.5" />
+            <FileSpreadsheet className="w-3.5 h-3.5 text-emerald-200" />
+            <span>Ekspor Excel (.XLSX)</span>
+          </button>
+          <button
+            onClick={handleExportCsv}
+            className="px-3 py-2 bg-teal-700 hover:bg-teal-800 text-white rounded-xl text-xs font-bold shadow-md shadow-teal-700/20 flex items-center gap-1.5 cursor-pointer transition-colors"
+            title="Ekspor rekap data ke CSV"
+          >
+            <Download className="w-3.5 h-3.5 text-teal-200" />
             <span>Ekspor CSV</span>
           </button>
           <button
             onClick={() => setIsPdfModalOpen(true)}
-            className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold shadow-md flex items-center gap-1.5 cursor-pointer transition-colors"
+            className="px-3.5 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-bold shadow-md flex items-center gap-1.5 cursor-pointer transition-colors"
           >
             <Printer className="w-3.5 h-3.5 text-orange-400" />
             <span>Cetak PDF Report</span>

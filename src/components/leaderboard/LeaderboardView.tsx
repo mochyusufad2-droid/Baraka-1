@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { 
   Trophy, 
   Medal, 
@@ -18,25 +18,79 @@ import { useRace } from '../../context/RaceContext';
 import { Team } from '../../types';
 import { LeaderboardPdfReportModal } from './LeaderboardPdfReportModal';
 
+import { exportLeaderboardToExcel, exportLeaderboardToCsv } from '../../utils/exportLeaderboard';
+
 interface LeaderboardViewProps {
   onShowToast: (msg: string) => void;
 }
 
 export const LeaderboardView: React.FC<LeaderboardViewProps> = ({ onShowToast }) => {
-  const { teams, events } = useRace();
+  const { teams, events, refreshDataFromStorage } = useRace();
   const [filterCategory, setFilterCategory] = useState<string>('all');
   const [searchQuery, setSearchQuery] = useState<string>('');
   const [isRefreshing, setIsRefreshing] = useState<boolean>(false);
   const [isPdfModalOpen, setIsPdfModalOpen] = useState<boolean>(false);
 
+  // Auto Polling State (30 seconds)
+  const [isAutoPolling, setIsAutoPolling] = useState<boolean>(true);
+  const [countdown, setCountdown] = useState<number>(30);
+  const [lastUpdatedTime, setLastUpdatedTime] = useState<string>(() => {
+    return new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' WIB';
+  });
+
   const currentEvent = events[0];
 
-  const handleRefresh = () => {
+  // Function to perform state refresh
+  const triggerRefresh = (isManual = false) => {
     setIsRefreshing(true);
+    if (refreshDataFromStorage) {
+      refreshDataFromStorage();
+    }
+    const updatedTime = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' WIB';
+    setLastUpdatedTime(updatedTime);
+    setCountdown(30);
+
     setTimeout(() => {
       setIsRefreshing(false);
-      onShowToast('Papan skor diperbarui dengan data terkini!');
-    }, 500);
+      if (isManual) {
+        onShowToast('Papan skor diperbarui dengan data terkini!');
+      }
+    }, 400);
+  };
+
+  // Automatic Polling Interval (every 30 seconds)
+  useEffect(() => {
+    if (!isAutoPolling) return;
+
+    const interval = setInterval(() => {
+      setCountdown((prev) => {
+        if (prev <= 1) {
+          triggerRefresh(false);
+          return 30;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [isAutoPolling, refreshDataFromStorage]);
+
+  const handleManualRefresh = () => {
+    triggerRefresh(true);
+  };
+
+  // Toggle Auto Polling ON/OFF
+  const toggleAutoPolling = () => {
+    setIsAutoPolling((prev) => {
+      const next = !prev;
+      if (next) {
+        setCountdown(30);
+        onShowToast('🔄 Polling otomatis leaderboard setiap 30 detik DIATIFKAN.');
+      } else {
+        onShowToast('⏸️ Polling otomatis DIJEDA.');
+      }
+      return next;
+    });
   };
 
   // Sort teams by totalScore descending, then by duration
@@ -49,56 +103,22 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({ onShowToast })
     return matchesCategory && matchesSearch;
   });
 
+  // Direct Excel (.XLSX) Export
+  const handleExportExcel = () => {
+    try {
+      const fileName = exportLeaderboardToExcel(filteredTeams, currentEvent, filterCategory);
+      onShowToast(`📊 File Excel (.XLSX) "${fileName}" berhasil diunduh!`);
+    } catch (err) {
+      console.error('Failed to export Excel:', err);
+      onShowToast('Gagal mengunduh file Excel. Mencoba format CSV...');
+      handleExportCsv();
+    }
+  };
+
   // Direct CSV Export
-  const handleDirectCsvExport = () => {
-    const headers = [
-      'Peringkat',
-      'Nomor_BIB',
-      'Nama_Tim',
-      'Kategori',
-      'Ketua_Tim',
-      'Pos_Selesai',
-      'Total_Pos',
-      'Poin_Dasar',
-      'Bonus_Juri',
-      'Penalti_Poin',
-      'Penalti_Waktu_Menit',
-      'Total_Skor',
-      'Durasi_Menit',
-      'Status',
-      'Pos_Terakhir'
-    ];
-
-    const rows = filteredTeams.map((t, idx) => [
-      idx + 1,
-      `"${t.bibNumber}"`,
-      `"${t.name.replace(/"/g, '""')}"`,
-      `"${t.category.replace(/"/g, '""')}"`,
-      `"${(t.members[0]?.name || '-').replace(/"/g, '""')}"`,
-      t.checkpointsCompleted,
-      t.totalCheckpoints,
-      t.points,
-      t.bonusPoints,
-      t.penaltyPoints,
-      t.penaltyMinutes || 0,
-      t.totalScore,
-      t.durationMinutes,
-      `"${t.status}"`,
-      `"${(t.lastPosName || '-').replace(/"/g, '""')}"`
-    ]);
-
-    const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    link.setAttribute('href', url);
-    link.setAttribute('download', `Leaderboard_${(currentEvent?.title || 'RacePoint').replace(/\s+/g, '_')}_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-
-    onShowToast('📊 File Rekap Leaderboard (.CSV) berhasil diunduh!');
+  const handleExportCsv = () => {
+    const fileName = exportLeaderboardToCsv(filteredTeams, currentEvent, filterCategory);
+    onShowToast(`📑 File CSV "${fileName}" berhasil diunduh!`);
   };
 
   // Top 3 Podium
@@ -112,8 +132,8 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({ onShowToast })
       <div className="bg-gradient-to-r from-[#0b192c] via-slate-900 to-blue-950 text-white rounded-2xl p-6 sm:p-8 shadow-xl border border-slate-800 text-center relative overflow-hidden">
         <div className="relative z-10 max-w-3xl mx-auto space-y-3">
           <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-orange-500/20 text-orange-400 border border-orange-500/30 text-xs font-bold uppercase tracking-wider">
-            <span className="w-2 h-2 rounded-full bg-emerald-400 animate-ping"></span>
-            <span>Live Stage Leaderboard • Terhubung Langsung</span>
+            <span className={`w-2 h-2 rounded-full ${isAutoPolling ? 'bg-emerald-400 animate-ping' : 'bg-amber-400'}`}></span>
+            <span>Live Stage Leaderboard • Real-Time Polling 30 Detik</span>
           </div>
           <h1 className="text-2xl sm:text-4xl font-black tracking-tight text-white">
             Papan Peringkat Balapan Terkini
@@ -124,7 +144,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({ onShowToast })
 
           <div className="flex flex-wrap items-center justify-center gap-2.5 pt-3">
             <button
-              onClick={handleRefresh}
+              onClick={handleManualRefresh}
               className="px-4 py-2.5 bg-orange-500 hover:bg-orange-600 text-slate-950 rounded-xl text-xs font-extrabold shadow-md shadow-orange-500/20 flex items-center gap-2 cursor-pointer transition-all active:scale-95"
             >
               <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} />
@@ -132,10 +152,20 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({ onShowToast })
             </button>
 
             <button
-              onClick={handleDirectCsvExport}
-              className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/20 flex items-center gap-2 cursor-pointer transition-all active:scale-95"
+              onClick={handleExportExcel}
+              className="px-4 py-2.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-extrabold shadow-md shadow-emerald-600/25 flex items-center gap-2 cursor-pointer transition-all active:scale-95"
+              title="Unduh rekapitulasi data lengkap ke spreadsheet Excel (.xlsx)"
             >
-              <FileSpreadsheet className="w-4 h-4" />
+              <FileSpreadsheet className="w-4 h-4 text-emerald-200" />
+              <span>Ekspor Excel (.XLSX)</span>
+            </button>
+
+            <button
+              onClick={handleExportCsv}
+              className="px-4 py-2.5 bg-teal-700 hover:bg-teal-600 text-white rounded-xl text-xs font-bold shadow-md shadow-teal-700/20 flex items-center gap-2 cursor-pointer transition-all active:scale-95"
+              title="Unduh data skor peringkat ke format CSV"
+            >
+              <Download className="w-4 h-4 text-teal-200" />
               <span>Ekspor CSV</span>
             </button>
 
@@ -147,6 +177,55 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({ onShowToast })
               <span>Cetak / Ekspor PDF Report</span>
             </button>
           </div>
+        </div>
+      </div>
+
+      {/* Auto-Polling Real-Time Status Control Bar */}
+      <div className="bg-slate-900 border border-slate-800 rounded-2xl p-4 shadow-lg text-white flex flex-col sm:flex-row items-center justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="relative flex items-center justify-center">
+            <div className={`w-3 h-3 rounded-full ${isAutoPolling ? 'bg-emerald-500 animate-ping' : 'bg-slate-500'}`} />
+            <div className={`w-2.5 h-2.5 rounded-full absolute ${isAutoPolling ? 'bg-emerald-400' : 'bg-slate-400'}`} />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-bold text-slate-200">
+                {isAutoPolling ? 'SINKRONISASI REAL-TIME (POLLING 30d)' : 'POLLING OTOMATIS DIJEDA'}
+              </span>
+              <span className="px-2 py-0.5 rounded-md text-[10px] font-mono font-bold bg-slate-800 text-orange-400 border border-slate-700">
+                {isAutoPolling ? `${countdown}s` : 'OFF'}
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-400">
+              Terakhir diperbarui: <span className="font-mono text-slate-200 font-semibold">{lastUpdatedTime}</span>
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-3">
+          {/* Progress Bar indicator for 30s countdown */}
+          {isAutoPolling && (
+            <div className="hidden md:flex items-center gap-2">
+              <div className="w-28 bg-slate-800 h-2 rounded-full overflow-hidden border border-slate-700">
+                <div
+                  className="bg-gradient-to-r from-orange-500 to-emerald-400 h-full transition-all duration-1000 ease-linear"
+                  style={{ width: `${(countdown / 30) * 100}%` }}
+                />
+              </div>
+            </div>
+          )}
+
+          <button
+            onClick={toggleAutoPolling}
+            className={`px-3 py-1.5 rounded-xl text-xs font-extrabold flex items-center gap-1.5 transition-all cursor-pointer border ${
+              isAutoPolling
+                ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30 hover:bg-emerald-500/20'
+                : 'bg-slate-800 text-slate-300 border-slate-700 hover:bg-slate-700'
+            }`}
+          >
+            <Clock className="w-3.5 h-3.5" />
+            <span>{isAutoPolling ? 'Auto-Update: Aktif (30d)' : 'Aktifkan Auto-Update'}</span>
+          </button>
         </div>
       </div>
 
@@ -274,7 +353,7 @@ export const LeaderboardView: React.FC<LeaderboardViewProps> = ({ onShowToast })
             </thead>
             <tbody className="divide-y divide-slate-100">
               {filteredTeams.map((t, idx) => (
-                <tr key={t.id} className="hover:bg-slate-50/80 transition-colors">
+                <tr key={`${t.id}-${idx}`} className="hover:bg-slate-50/80 transition-colors">
                   <td className="p-4 text-center font-mono font-black text-slate-800 text-sm">
                     {idx === 0 ? '🥇 1' : idx === 1 ? '🥈 2' : idx === 2 ? '🥉 3' : `#${idx + 1}`}
                   </td>

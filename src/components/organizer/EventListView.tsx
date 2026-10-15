@@ -167,9 +167,20 @@ export const EventListView: React.FC<EventListViewProps> = ({
               {/* Event Card Header */}
               <div className="p-5 pb-3">
                 <div className="flex items-start justify-between gap-3 mb-2">
-                  <span className="px-2.5 py-0.5 rounded-md bg-slate-100 text-slate-700 text-[11px] font-semibold">
-                    {getEventTypeLabel(evt.eventType)}
-                  </span>
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="px-2.5 py-0.5 rounded-md bg-slate-100 text-slate-700 text-[11px] font-semibold">
+                      {getEventTypeLabel(evt.eventType)}
+                    </span>
+                    {evt.visibility === 'private' ? (
+                      <span className="px-2 py-0.5 rounded-md bg-indigo-100 text-indigo-800 border border-indigo-200 text-[10px] font-bold flex items-center gap-1" title={`Kode Event Privat: ${evt.eventCode}`}>
+                        🔒 Privat: <span className="font-mono">{evt.eventCode || 'PRV'}</span>
+                      </span>
+                    ) : (
+                      <span className="px-2 py-0.5 rounded-md bg-slate-100 text-slate-600 border border-slate-200 text-[10px] font-medium flex items-center gap-1">
+                        🌐 Publik
+                      </span>
+                    )}
+                  </div>
                   <div className="flex items-center gap-1.5">
                     {getStatusBadge(evt.status)}
                     <button

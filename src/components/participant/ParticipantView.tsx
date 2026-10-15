@@ -37,12 +37,14 @@ import {
 } from 'lucide-react';
 import { useRace } from '../../context/RaceContext';
 import { Checkpoint, Team } from '../../types';
-import { QrCodeGeneratorModal } from '../common/QrCodeGeneratorModal';
 import { InteractiveCompassMap } from './InteractiveCompassMap';
 import { FinisherCertificateModal } from '../common/FinisherCertificateModal';
+import { ParticipantQrScannerModal } from './ParticipantQrScannerModal';
 import { 
   queueOfflineScan, 
   getPendingOfflineScans, 
+  getAllOfflineScans,
+  updateOfflineScanStatus,
   markScanAsSynced, 
   clearOfflineScanQueue,
   OfflineScanQueueItem 
@@ -120,8 +122,7 @@ export const ParticipantView: React.FC<ParticipantViewProps> = ({
   const [photoPreviewUrl, setPhotoPreviewUrl] = useState<string>('https://images.unsplash.com/photo-1526778548025-fa2f459cd5c1?auto=format&fit=crop&w=600&q=80');
   const [challengeSentSuccess, setChallengeSentSuccess] = useState(false);
 
-  // View QR Sticker modal & Certificate modal
-  const [scannedModalCp, setScannedModalCp] = useState<Checkpoint | null>(null);
+  // Modal states
   const [certModalOpen, setCertModalOpen] = useState(false);
   const [rulesModalOpen, setRulesModalOpen] = useState(false);
   const [sosModalOpen, setSosModalOpen] = useState(false);
@@ -188,7 +189,7 @@ export const ParticipantView: React.FC<ParticipantViewProps> = ({
     setIsSyncingOffline(true);
     let count = 0;
     for (const item of items) {
-      const res = checkInByQrCode(item.teamId, item.qrCodeInput, item.bypassCooldown);
+      const res = await checkInByQrCode(item.teamId, item.qrCodeInput, item.bypassCooldown);
       if (res.success || res.message.includes('sudah') || res.message.includes('tercatat') || res.message.includes('selesai')) {
         await markScanAsSynced(item.id);
         count++;
@@ -240,22 +241,17 @@ export const ParticipantView: React.FC<ParticipantViewProps> = ({
     return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
   };
 
-  const handleLogin = (e: React.FormEvent) => {
+  const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoginError(null);
-    const res = loginParticipant(bibInput, pinInput);
+    const res = await loginParticipant(bibInput, pinInput);
     if (res.success) {
-      onShowToast(`Selamat datang, Tim ${res.team?.name}! Anda siap bertanding.`);
+      onShowToast(`Selamat datang, Tim ${res.team?.name}! Sesi tim berhasil diverifikasi server.`);
       setBibInput('');
       setPinInput('');
     } else {
       setLoginError(res.message || 'Login gagal.');
     }
-  };
-
-  const handleQuickLogin = (team: Team) => {
-    setActiveTeamId(team.id);
-    onShowToast(`Beralih ke sesi Tim ${team.name} (${team.bibNumber}).`);
   };
 
   const isCpAutoLocked = (cp: Checkpoint) => {
@@ -281,6 +277,15 @@ export const ParticipantView: React.FC<ParticipantViewProps> = ({
 
     const effectivelyOffline = !isOnline || simulatedOffline;
 
+    const gpsCoords = await new Promise<{ lat: number; lng: number; accuracy?: number } | undefined>((resolve) => {
+      if (!navigator.geolocation) return resolve(undefined);
+      navigator.geolocation.getCurrentPosition(
+        (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy }),
+        () => resolve(undefined),
+        { timeout: 2500, enableHighAccuracy: true, maximumAge: 15000 }
+      );
+    });
+
     if (effectivelyOffline) {
       // Offline mode: Queue scan to IndexedDB first
       await queueOfflineScan({
@@ -293,7 +298,7 @@ export const ParticipantView: React.FC<ParticipantViewProps> = ({
       });
 
       // Update local state in RaceContext
-      const res = checkInCheckpoint(currentTeam.id, cp.id, demoBypassCooldown);
+      const res = await checkInCheckpoint(currentTeam.id, cp.id, demoBypassCooldown, gpsCoords);
       await refreshPendingQueue();
 
       if (res.isLocked) {
@@ -308,13 +313,13 @@ export const ParticipantView: React.FC<ParticipantViewProps> = ({
       return;
     }
 
-    const res = checkInCheckpoint(currentTeam.id, cp.id, demoBypassCooldown);
+    const res = await checkInCheckpoint(currentTeam.id, cp.id, demoBypassCooldown, gpsCoords);
     if (res.isLocked) {
       onShowToast(res.message || `🔒 Pos ${cp.name} telah tertutup otomatis.`);
     } else if (res.success) {
       onShowToast(
         showScore 
-          ? `Berhasil check-in di ${res.checkpointName}! +${res.pointsAwarded} Poin ditambahkan. Jeda pos berikutnya dimulai.`
+          ? `Berhasil check-in di ${res.checkpointName}! +${res.pointsAwarded} Poin tersinkronisasi server.`
           : `Berhasil check-in di ${res.checkpointName}! Pos resmi dicatat tuntas.`
       );
     } else if (res.isCooldown) {
@@ -348,6 +353,15 @@ export const ParticipantView: React.FC<ParticipantViewProps> = ({
       return;
     }
 
+    const gpsCoords = await new Promise<{ lat: number; lng: number; accuracy?: number } | undefined>((resolve) => {
+      if (!navigator.geolocation) return resolve(undefined);
+      navigator.geolocation.getCurrentPosition(
+        (pos) => resolve({ lat: pos.coords.latitude, lng: pos.coords.longitude, accuracy: pos.coords.accuracy }),
+        () => resolve(undefined),
+        { timeout: 2500, enableHighAccuracy: true, maximumAge: 15000 }
+      );
+    });
+
     if (effectivelyOffline) {
       await queueOfflineScan({
         teamId: currentTeam.id,
@@ -358,7 +372,7 @@ export const ParticipantView: React.FC<ParticipantViewProps> = ({
         bypassCooldown: demoBypassCooldown
       });
 
-      const res = checkInCheckpoint(currentTeam.id, matchedCp.id, demoBypassCooldown);
+      const res = await checkInCheckpoint(currentTeam.id, matchedCp.id, demoBypassCooldown, gpsCoords);
       await refreshPendingQueue();
       setQrInputText('');
       setScannerModalOpen(false);
@@ -371,7 +385,7 @@ export const ParticipantView: React.FC<ParticipantViewProps> = ({
       return;
     }
 
-    const res = checkInByQrCode(currentTeam.id, qrInputText, demoBypassCooldown);
+    const res = await checkInByQrCode(currentTeam.id, qrInputText, demoBypassCooldown, gpsCoords);
     onShowToast(res.message);
     if (res.success) {
       setQrInputText('');
@@ -607,33 +621,6 @@ export const ParticipantView: React.FC<ParticipantViewProps> = ({
                     Masuk Arena Pertandingan
                   </button>
                 </form>
-
-                {/* Quick Demo Login selector */}
-                <div className="pt-3 border-t border-slate-800">
-                  <div className="text-[11px] font-bold text-slate-400 mb-2 flex items-center justify-between">
-                    <span>Pilih Cepat Tim Demo (Evaluator):</span>
-                    <span className="text-orange-400 text-[10px]">PIN: 1234</span>
-                  </div>
-                  <div className="space-y-1.5 max-h-40 overflow-y-auto pr-1">
-                    {teams.map((t) => (
-                      <button
-                        key={t.id}
-                        onClick={() => handleQuickLogin(t)}
-                        className="w-full p-2 rounded-xl bg-slate-900 hover:bg-slate-800 border border-slate-800 text-left flex items-center justify-between text-xs transition-colors cursor-pointer"
-                      >
-                        <div className="flex items-center gap-2">
-                          <span className="w-6 h-6 rounded-lg bg-orange-500/20 text-orange-400 font-bold flex items-center justify-center text-[10px]">
-                            {t.bibNumber}
-                          </span>
-                          <span className="font-bold text-slate-200">{t.name}</span>
-                        </div>
-                        <span className="text-[10px] text-slate-400 font-mono">
-                          {showScore ? `${t.totalScore} Pts` : `${t.checkpointsCompleted} Pos`}
-                        </span>
-                      </button>
-                    ))}
-                  </div>
-                </div>
               </div>
 
               <div className="text-center text-[10px] text-slate-500 pt-3">
@@ -1008,7 +995,7 @@ export const ParticipantView: React.FC<ParticipantViewProps> = ({
 
                         return (
                           <div 
-                            key={cp.id}
+                            key={`${cp.id}-${idx}`}
                             className={`rounded-2xl border p-3.5 transition-all ${
                               isDone
                                 ? 'bg-emerald-50/70 border-emerald-200'
@@ -1074,13 +1061,7 @@ export const ParticipantView: React.FC<ParticipantViewProps> = ({
                             <div className="mt-2.5 pt-2 border-t border-slate-200/80 space-y-1.5">
                               <div className="flex items-center justify-between text-[11px]">
                                 <span className="font-semibold text-slate-700">Petunjuk Lokasi (Clue):</span>
-                                <button
-                                  type="button"
-                                  onClick={() => setScannedModalCp(cp)}
-                                  className="text-orange-600 font-bold hover:underline cursor-pointer text-[10px]"
-                                >
-                                  Lihat Stiker QR
-                                </button>
+                                <span className="text-[10px] text-slate-500 font-mono">Pos #{cp.number}</span>
                               </div>
                               <p className="bg-white/90 p-2 rounded-xl text-[11px] text-slate-700 italic border border-slate-200">
                                 {cp.clue ? `"${cp.clue}"` : <span className="text-slate-400 not-italic">(Langsung menuju patokan pos)</span>}
@@ -1130,7 +1111,7 @@ export const ParticipantView: React.FC<ParticipantViewProps> = ({
                                   ) : (
                                     <button
                                       type="button"
-                                      onClick={() => handleSimulateCheckIn(cp)}
+                                      onClick={() => setScannerModalOpen(true)}
                                       className={`px-3 py-1.5 text-[10px] font-bold rounded-xl cursor-pointer transition-all flex items-center gap-1.5 shadow-xs ${
                                         cooldownRemaining > 0 && !demoBypassCooldown
                                           ? 'bg-amber-600 hover:bg-amber-700 text-white'
@@ -1172,7 +1153,7 @@ export const ParticipantView: React.FC<ParticipantViewProps> = ({
                   <InteractiveCompassMap
                     checkpoints={checkpoints}
                     currentTeam={currentTeam}
-                    onSelectCheckpoint={(cp) => handleSimulateCheckIn(cp)}
+                    onSelectCheckpoint={(_cp) => setScannerModalOpen(true)}
                     showDigitalMap={showMap}
                   />
                 )}
@@ -1211,7 +1192,7 @@ export const ParticipantView: React.FC<ParticipantViewProps> = ({
                       ) : (
                         currentTeam.visitHistory.map((visit, idx) => (
                           <div
-                            key={visit.checkpointId || idx}
+                            key={`${visit.checkpointId || 'visit'}-${idx}-${visit.timeString || ''}`}
                             className="bg-white border border-slate-200 hover:border-orange-300 rounded-2xl p-3.5 shadow-xs flex items-center justify-between gap-3 transition-all"
                           >
                             <div className="flex items-center gap-3">
@@ -1304,7 +1285,7 @@ export const ParticipantView: React.FC<ParticipantViewProps> = ({
                         <div className="space-y-2">
                           {teams.map((t, idx) => (
                             <div 
-                              key={t.id}
+                              key={`${t.id}-${idx}`}
                               className={`p-2.5 rounded-xl border flex items-center justify-between ${
                                 t.id === currentTeam.id 
                                   ? 'bg-orange-50 border-orange-400 shadow-sm ring-1 ring-orange-400/30' 
@@ -1362,132 +1343,33 @@ export const ParticipantView: React.FC<ParticipantViewProps> = ({
         </div>
       </div>
 
-      {/* ========================================================
-          INTEGRATED MODAL: PEMINDAI KAMERA & KETIK KODE BARCODE
-          ======================================================== */}
-      {scannerModalOpen && currentTeam && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-950/80 backdrop-blur-sm animate-in fade-in duration-200">
-          <div className="bg-white rounded-3xl max-w-sm w-full p-5 shadow-2xl border border-slate-200 max-h-[90vh] overflow-y-auto space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <div className="flex items-center gap-2">
-                <div className="w-8 h-8 rounded-xl bg-orange-100 text-orange-600 flex items-center justify-center font-bold">
-                  <QrCode className="w-4 h-4" />
-                </div>
-                <div>
-                  <h3 className="font-extrabold text-slate-900 text-sm">Pemindai QR Code Pos</h3>
-                  <p className="text-[10px] text-slate-500">Scan kamera atau ketik barcode unik</p>
-                </div>
-              </div>
-              <button
-                onClick={() => setScannerModalOpen(false)}
-                className="p-1.5 text-slate-400 hover:text-slate-700 rounded-lg hover:bg-slate-100 cursor-pointer"
-              >
-                <X className="w-5 h-5" />
-              </button>
-            </div>
-
-            {/* Cooldown Warning if active */}
-            {cooldownRemaining > 0 && !demoBypassCooldown && (
-              <div className="p-3 bg-amber-50 border border-amber-300 rounded-xl text-xs text-amber-900 flex items-center justify-between gap-2">
-                <div className="flex items-center gap-2">
-                  <Clock className="w-4 h-4 text-amber-600 animate-spin" />
-                  <span>Jeda minimum: tunggu {cooldownRemaining}s lagi.</span>
-                </div>
-                <button
-                  type="button"
-                  onClick={() => setDemoBypassCooldown(true)}
-                  className="text-[10px] font-bold text-amber-700 underline"
-                >
-                  Bypass
-                </button>
-              </div>
-            )}
-
-            {/* Camera Viewfinder */}
-            <div className="relative bg-slate-950 rounded-2xl p-4 text-center text-white overflow-hidden flex flex-col items-center justify-center min-h-[180px]">
-              {useRealCamera ? (
-                <div className="relative w-full aspect-video rounded-xl overflow-hidden bg-black flex items-center justify-center border-2 border-orange-500">
-                  <video
-                    ref={videoRef}
-                    autoPlay
-                    playsInline
-                    muted
-                    className="w-full h-full object-cover"
-                  />
-                  <div className="absolute inset-0 border-2 border-dashed border-orange-400 rounded-xl pointer-events-none flex items-center justify-center">
-                    <span className="text-[10px] bg-black/70 px-2 py-0.5 rounded text-orange-300 font-mono">
-                      Arahkan ke QR Pos
-                    </span>
-                  </div>
-                </div>
-              ) : (
-                <div className="w-28 h-28 border-2 border-orange-500/80 rounded-2xl relative flex items-center justify-center animate-pulse">
-                  <QrCode className="w-10 h-10 text-orange-400" />
-                </div>
-              )}
-
-              <button
-                type="button"
-                onClick={toggleCamera}
-                className="mt-3 px-3 py-1 bg-slate-800 hover:bg-slate-700 text-slate-200 border border-slate-700 rounded-lg text-[10px] font-semibold flex items-center gap-1 cursor-pointer"
-              >
-                <Video className="w-3 h-3 text-orange-400" />
-                <span>{useRealCamera ? 'Tutup Kamera Asli' : 'Buka Lensa Kamera HP'}</span>
-              </button>
-            </div>
-
-            {/* Manual Code Input Form */}
-            <div className="space-y-2">
-              <label className="font-bold text-slate-800 text-xs flex items-center gap-1">
-                <Key className="w-3.5 h-3.5 text-orange-500" />
-                <span>Ketik / Tempel Kode Barcode:</span>
-              </label>
-              <div className="flex items-center gap-2">
-                <input
-                  type="text"
-                  placeholder="Contoh: RP-BOGOR-01..."
-                  value={qrInputText}
-                  onChange={(e) => setQrInputText(e.target.value)}
-                  className="flex-1 px-3 py-2 bg-slate-50 border border-slate-300 rounded-xl text-xs font-mono uppercase text-slate-900 focus:outline-none focus:ring-2 focus:ring-orange-500"
-                />
-                <button
-                  type="button"
-                  onClick={handleManualQrCheckIn}
-                  className="px-4 py-2 bg-orange-500 hover:bg-orange-600 text-white rounded-xl text-xs font-bold shrink-0 cursor-pointer shadow-xs"
-                >
-                  Check-in
-                </button>
-              </div>
-            </div>
-
-            {/* Quick Testing Barcode Chips */}
-            <div className="pt-2 border-t border-slate-100">
-              <span className="text-[10px] text-slate-400 font-bold block mb-1.5 uppercase tracking-wider">
-                Pilih Kode Pos Cepat (Simulasi):
-              </span>
-              <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
-                {checkpoints.map((cp) => (
-                  <button
-                    key={cp.id}
-                    type="button"
-                    onClick={() => {
-                      setQrInputText(cp.qrCodeValue);
-                      const res = checkInByQrCode(currentTeam.id, cp.qrCodeValue, demoBypassCooldown);
-                      onShowToast(res.message);
-                      if (res.success) {
-                        setScannerModalOpen(false);
-                      }
-                    }}
-                    className="px-2 py-1 rounded-lg bg-slate-100 hover:bg-orange-100 text-slate-700 hover:text-orange-900 border border-slate-200 text-[10px] font-mono cursor-pointer"
-                  >
-                    #{cp.number} {cp.qrCodeValue}
-                  </button>
-                ))}
-              </div>
-            </div>
-          </div>
-        </div>
-      )}
+      {/* Dedicated Camera QR Scanner Modal */}
+      <ParticipantQrScannerModal
+        isOpen={scannerModalOpen}
+        onClose={() => setScannerModalOpen(false)}
+        currentTeam={currentTeam}
+        checkpoints={checkpoints}
+        onProcessCheckIn={handleSimulateCheckIn}
+        onProcessManualCode={async (codeText) => {
+          setQrInputText(codeText);
+          const matchedCp = checkpoints.find((c) => {
+            const targetVal = c.qrCodeValue.toUpperCase();
+            const cleanInput = codeText.trim().toUpperCase();
+            return (
+              targetVal === cleanInput || 
+              targetVal.replace(/-/g, '') === cleanInput.replace(/-/g, '') ||
+              targetVal.endsWith(cleanInput)
+            );
+          });
+          if (matchedCp) {
+            await handleSimulateCheckIn(matchedCp);
+          } else {
+            onShowToast(`Kode barcode "${codeText}" tidak ditemukan di rute lomba.`);
+          }
+        }}
+        cooldownRemaining={cooldownRemaining}
+        onShowToast={onShowToast}
+      />
 
       {/* ========================================================
           INTEGRATED MODAL: UNGGAH MISI FOTO & TANTANGAN POS
@@ -1631,13 +1513,6 @@ export const ParticipantView: React.FC<ParticipantViewProps> = ({
           </div>
         </div>
       )}
-
-      {/* Real QR Modal */}
-      <QrCodeGeneratorModal
-        checkpoint={scannedModalCp}
-        onClose={() => setScannedModalCp(null)}
-        onShowToast={onShowToast}
-      />
 
       {/* Finisher Certificate Modal */}
       <FinisherCertificateModal

@@ -2,6 +2,8 @@ import React, { useState } from 'react';
 import { Navbar, ActiveView } from './components/common/Navbar';
 import { DemoNoticeBanner, RoadmapModal } from './components/common/DemoNoticeBanner';
 import { DemoToast } from './components/common/DemoToast';
+import { AuthModal } from './components/common/AuthModal';
+import { AdminJudgeLoginView } from './components/common/AdminJudgeLoginView';
 import { LandingPage } from './components/landing/LandingPage';
 import { OrganizerLayout } from './components/organizer/OrganizerLayout';
 import { EventListView } from './components/organizer/EventListView';
@@ -10,22 +12,30 @@ import { ParticipantView } from './components/participant/ParticipantView';
 import { JudgeDashboardView } from './components/judge/JudgeDashboardView';
 import { LeaderboardView } from './components/leaderboard/LeaderboardView';
 import { OrganizerMenu } from './types';
-import { Compass, ShieldCheck, Smartphone, UserCheck, Trophy } from 'lucide-react';
-import { RaceProvider, useRace } from './context/RaceContext';
+import { Compass, ShieldCheck, Smartphone, UserCheck, Trophy, Lock, Shield, Key } from 'lucide-react';
+import { RaceProvider, useRace, UserRole } from './context/RaceContext';
 
 function AppContent() {
   const [currentView, setCurrentView] = useState<ActiveView>('landing');
   const [organizerSubMenu, setOrganizerSubMenu] = useState<OrganizerMenu>('dashboard');
-  const [selectedEventId, setSelectedEventId] = useState<string>('evt-01');
   const [isViewingEventDetail, setIsViewingEventDetail] = useState<boolean>(false);
-  const { setActiveTeamId } = useRace();
+  const { setActiveTeamId, hasAccess, currentUserRole, selectedEventId, setSelectedEventId } = useRace();
 
   // Modal & Toast States
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const [roadmapModalOpen, setRoadmapModalOpen] = useState<boolean>(false);
 
+  // Auth & RBAC Modal State
+  const [authModalOpen, setAuthModalOpen] = useState<boolean>(false);
+  const [authTargetRole, setAuthTargetRole] = useState<'organizer' | 'judge'>('organizer');
+
   const showToast = (msg: string) => {
     setToastMessage(msg);
+  };
+
+  const handleOpenAuthModal = (role: 'organizer' | 'judge') => {
+    setAuthTargetRole(role);
+    setAuthModalOpen(true);
   };
 
   const handleOpenEventDetail = (eventId: string) => {
@@ -55,6 +65,7 @@ function AppContent() {
           window.scrollTo({ top: 0, behavior: 'smooth' });
         }}
         onShowToast={showToast}
+        onOpenAuthModal={handleOpenAuthModal}
         activeEventId={selectedEventId}
       />
 
@@ -64,6 +75,14 @@ function AppContent() {
         {currentView === 'landing' && (
           <LandingPage
             onSelectView={(view) => {
+              if (view === 'organizer' && !hasAccess('organizer')) {
+                handleOpenAuthModal('organizer');
+                return;
+              }
+              if (view === 'judge' && !hasAccess('judge')) {
+                handleOpenAuthModal('judge');
+                return;
+              }
               setCurrentView(view);
               window.scrollTo({ top: 0, behavior: 'smooth' });
             }}
@@ -71,20 +90,53 @@ function AppContent() {
           />
         )}
 
-        {/* VIEW 2: ORGANIZER DASHBOARD (Houses 8 submenus: Dashboard, Event, Checkpoint, Tim, Challenge, Penilaian, Hasil, Pengaturan) */}
+        {/* VIEW 2: ORGANIZER DASHBOARD (Protected by RBAC) */}
         {currentView === 'organizer' && (
-          <OrganizerLayout
-            currentSubMenu={organizerSubMenu}
-            onSelectSubMenu={(menu) => setOrganizerSubMenu(menu)}
-            onOpenEventDetail={handleOpenEventDetail}
-            selectedEventId={selectedEventId}
-            onBackToEventList={() => setOrganizerSubMenu('events')}
-            isViewingEventDetail={false}
-            onShowToast={showToast}
-            onSwitchToParticipant={() => setCurrentView('participant')}
-            onOpenLeaderboard={() => setCurrentView('leaderboard')}
-            onSelectTeamForParticipantPreview={handleSelectTeamForParticipant}
-          />
+          hasAccess('organizer') ? (
+            <OrganizerLayout
+              currentSubMenu={organizerSubMenu}
+              onSelectSubMenu={(menu) => setOrganizerSubMenu(menu)}
+              onOpenEventDetail={handleOpenEventDetail}
+              selectedEventId={selectedEventId}
+              onBackToEventList={() => setOrganizerSubMenu('events')}
+              isViewingEventDetail={false}
+              onShowToast={showToast}
+              onSwitchToParticipant={() => setCurrentView('participant')}
+              onOpenLeaderboard={() => setCurrentView('leaderboard')}
+              onSelectTeamForParticipantPreview={handleSelectTeamForParticipant}
+            />
+          ) : (
+            <div className="max-w-xl mx-auto py-16 px-4 text-center space-y-6">
+              <div className="w-16 h-16 rounded-3xl bg-amber-100 text-amber-600 border-2 border-amber-300 flex items-center justify-center mx-auto shadow-lg">
+                <Lock className="w-8 h-8" />
+              </div>
+              <div className="space-y-2">
+                <span className="px-3 py-1 rounded-full bg-orange-100 text-orange-800 text-xs font-extrabold uppercase">
+                  PEMBATASAN HAK AKSES (RBAC)
+                </span>
+                <h2 className="text-2xl font-black text-slate-900">Akses Organizer Hub Dikunci</h2>
+                <p className="text-sm text-slate-600 leading-relaxed">
+                  Anda belum terautentikasi sebagai Panitia (Admin). Halaman ini memerlukan kata laluan / password resmi penyelenggara.
+                </p>
+              </div>
+
+              <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
+                <button
+                  onClick={() => handleOpenAuthModal('organizer')}
+                  className="w-full sm:w-auto px-6 py-3 bg-gradient-to-r from-orange-500 to-amber-500 text-slate-950 font-black rounded-xl text-xs shadow-lg shadow-orange-500/20 flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-95"
+                >
+                  <Key className="w-4 h-4" />
+                  <span>Masukkan Password Panitia</span>
+                </button>
+                <button
+                  onClick={() => setCurrentView('landing')}
+                  className="w-full sm:w-auto px-5 py-3 bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold rounded-xl text-xs transition-colors cursor-pointer"
+                >
+                  Kembali ke Beranda
+                </button>
+              </div>
+            </div>
+          )
         )}
 
         {/* VIEW 3: DAFTAR EVENT */}
@@ -117,16 +169,81 @@ function AppContent() {
           />
         )}
 
-        {/* VIEW 6: DASHBOARD JURI / FASILITATOR DENGAN LIVE SCORING */}
+        {/* VIEW 6: DASHBOARD JURI / FASILITATOR (Protected by RBAC) */}
         {currentView === 'judge' && (
-          <JudgeDashboardView onShowToast={showToast} />
+          hasAccess('judge') ? (
+            <JudgeDashboardView onShowToast={showToast} />
+          ) : (
+            <div className="max-w-xl mx-auto py-16 px-4 text-center space-y-6">
+              <div className="w-16 h-16 rounded-3xl bg-blue-100 text-blue-600 border-2 border-blue-300 flex items-center justify-center mx-auto shadow-lg">
+                <UserCheck className="w-8 h-8" />
+              </div>
+              <div className="space-y-2">
+                <span className="px-3 py-1 rounded-full bg-blue-100 text-blue-800 text-xs font-extrabold uppercase">
+                  PEMBATASAN HAK AKSES (RBAC)
+                </span>
+                <h2 className="text-2xl font-black text-slate-900">Akses Dashboard Juri Dikunci</h2>
+                <p className="text-sm text-slate-600 leading-relaxed">
+                  Anda belum terautentikasi sebagai Juri Pos atau Panitia. Silakan masukkan password Juri untuk melakukan penilaian lapangan.
+                </p>
+              </div>
+
+              <div className="pt-2 flex flex-col sm:flex-row items-center justify-center gap-3">
+                <button
+                  onClick={() => handleOpenAuthModal('judge')}
+                  className="w-full sm:w-auto px-6 py-3 bg-gradient-to-r from-blue-600 to-indigo-600 text-white font-black rounded-xl text-xs shadow-lg shadow-blue-600/20 flex items-center justify-center gap-2 cursor-pointer transition-all active:scale-95"
+                >
+                  <Key className="w-4 h-4" />
+                  <span>Masukkan Password Juri Pos</span>
+                </button>
+                <button
+                  onClick={() => setCurrentView('landing')}
+                  className="w-full sm:w-auto px-5 py-3 bg-slate-200 hover:bg-slate-300 text-slate-800 font-bold rounded-xl text-xs transition-colors cursor-pointer"
+                >
+                  Kembali ke Beranda
+                </button>
+              </div>
+            </div>
+          )
         )}
 
         {/* VIEW 7: HALAMAN LEADERBOARD (PAPAN SKOR LANGSUNG SINKRON) */}
         {currentView === 'leaderboard' && (
           <LeaderboardView onShowToast={showToast} />
         )}
+
+        {/* VIEW 8: HALAMAN LOGON STAF & JURI (DEDICATED STAFF PORTAL) */}
+        {currentView === 'login' && (
+          <AdminJudgeLoginView
+            onShowToast={showToast}
+            onNavigateToView={(view) => {
+              if (view === 'organizer') {
+                setCurrentView('organizer');
+              } else if (view === 'judge') {
+                setCurrentView('judge');
+              } else {
+                setCurrentView('landing');
+              }
+              window.scrollTo({ top: 0, behavior: 'smooth' });
+            }}
+          />
+        )}
       </main>
+
+      {/* Auth Modal for RBAC */}
+      <AuthModal
+        isOpen={authModalOpen}
+        onClose={() => setAuthModalOpen(false)}
+        targetRole={authTargetRole}
+        onSuccessNavigate={(role) => {
+          if (role === 'organizer') {
+            setCurrentView('organizer');
+          } else if (role === 'judge') {
+            setCurrentView('judge');
+          }
+        }}
+        onShowToast={showToast}
+      />
 
       {/* 4. Global Footer */}
       <footer className="bg-[#0b192c] text-slate-400 border-t border-slate-800 text-xs py-8 px-4">

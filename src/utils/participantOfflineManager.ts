@@ -4,18 +4,28 @@
  * when participants are in areas with poor or absent cellular internet connection.
  */
 
+import { OfflineScanStatus } from '../types';
+
 export interface OfflineScanQueueItem {
   id: string;
   teamId: string;
+  eventId?: string;
   checkpointId?: string;
+  checkpointNumber?: number;
   qrCodeInput: string;
   timestamp: number;
   timeFormatted: string;
   checkpointName: string;
   pointsAwarded: number;
+  status: OfflineScanStatus;
   synced: boolean;
-  gpsCoordinates?: { lat: number; lng: number };
+  serverSyncTimestamp?: number;
+  serverMessage?: string;
+  serverCode?: string;
+  rejectionReason?: string;
+  gpsCoordinates?: { lat: number; lng: number; accuracy?: number; timestamp?: number };
   bypassCooldown?: boolean;
+  retryCount?: number;
 }
 
 export interface CachedRaceInfo {
@@ -133,16 +143,22 @@ export async function getParticipantRaceCache(): Promise<CachedRaceInfo | null> 
 /**
  * Add a new QR scan / check-in entry to the offline queue
  */
-export async function queueOfflineScan(scanItem: Omit<OfflineScanQueueItem, 'id' | 'timestamp' | 'timeFormatted' | 'synced'>): Promise<OfflineScanQueueItem> {
+export async function queueOfflineScan(
+  scanItem: Omit<OfflineScanQueueItem, 'id' | 'timestamp' | 'timeFormatted' | 'synced' | 'status'> & {
+    status?: OfflineScanStatus;
+  }
+): Promise<OfflineScanQueueItem> {
   const now = Date.now();
   const timeFormatted = new Date(now).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' WIB';
 
   const fullItem: OfflineScanQueueItem = {
     ...scanItem,
-    id: `offline-scan-${now}-${Math.random().toString(36).substr(2, 5)}`,
+    id: `offline-scan-${scanItem.teamId}-${scanItem.checkpointId || 'code'}-${now}`,
     timestamp: now,
     timeFormatted,
-    synced: false
+    status: scanItem.status || 'LOCAL_SAVED',
+    synced: false,
+    retryCount: 0
   };
 
   // 1. Save to LocalStorage queue backup
@@ -160,7 +176,7 @@ export async function queueOfflineScan(scanItem: Omit<OfflineScanQueueItem, 'id'
     const db = await initIndexedDB();
     const tx = db.transaction(STORE_SCANS, 'readwrite');
     const store = tx.objectStore(STORE_SCANS);
-    store.add(fullItem);
+    store.put(fullItem);
   } catch (e) {
     console.warn('[OfflineDB] IndexedDB scan queue failed:', e);
   }
@@ -169,12 +185,75 @@ export async function queueOfflineScan(scanItem: Omit<OfflineScanQueueItem, 'id'
 }
 
 /**
- * Retrieve all pending (unsynced) offline scans
+ * Update the status of an offline scan item (LOCAL_SAVED, SYNC_PENDING, SERVER_CONFIRMED, REJECTED, GPS_REVIEW_REQUIRED)
  */
-export async function getPendingOfflineScans(teamId?: string): Promise<OfflineScanQueueItem[]> {
+export async function updateOfflineScanStatus(
+  scanId: string,
+  status: OfflineScanStatus,
+  details?: {
+    serverMessage?: string;
+    serverCode?: string;
+    pointsAwarded?: number;
+    rejectionReason?: string;
+  }
+): Promise<void> {
+  const now = Date.now();
+  const isConfirmed = status === 'SERVER_CONFIRMED';
+
+  // 1. Update in LocalStorage
+  try {
+    const raw = localStorage.getItem(LOCAL_QUEUE_KEY);
+    if (raw) {
+      const items: OfflineScanQueueItem[] = JSON.parse(raw);
+      const updated = items.map(item => {
+        if (item.id === scanId) {
+          return {
+            ...item,
+            status,
+            synced: isConfirmed,
+            serverSyncTimestamp: isConfirmed ? now : item.serverSyncTimestamp,
+            serverMessage: details?.serverMessage || item.serverMessage,
+            serverCode: details?.serverCode || item.serverCode,
+            pointsAwarded: details?.pointsAwarded !== undefined ? details.pointsAwarded : item.pointsAwarded,
+            rejectionReason: details?.rejectionReason || item.rejectionReason,
+            retryCount: (item.retryCount || 0) + 1,
+          };
+        }
+        return item;
+      });
+      localStorage.setItem(LOCAL_QUEUE_KEY, JSON.stringify(updated));
+    }
+  } catch (e) {}
+
+  // 2. Update in IndexedDB
+  try {
+    const db = await initIndexedDB();
+    const tx = db.transaction(STORE_SCANS, 'readwrite');
+    const store = tx.objectStore(STORE_SCANS);
+    const req = store.get(scanId);
+    req.onsuccess = () => {
+      const item = req.result as OfflineScanQueueItem;
+      if (item) {
+        item.status = status;
+        item.synced = isConfirmed;
+        if (isConfirmed) item.serverSyncTimestamp = now;
+        if (details?.serverMessage) item.serverMessage = details.serverMessage;
+        if (details?.serverCode) item.serverCode = details.serverCode;
+        if (details?.pointsAwarded !== undefined) item.pointsAwarded = details.pointsAwarded;
+        if (details?.rejectionReason) item.rejectionReason = details.rejectionReason;
+        item.retryCount = (item.retryCount || 0) + 1;
+        store.put(item);
+      }
+    };
+  } catch (e) {}
+}
+
+/**
+ * Retrieve all offline scans (including confirmed history receipts)
+ */
+export async function getAllOfflineScans(teamId?: string): Promise<OfflineScanQueueItem[]> {
   let items: OfflineScanQueueItem[] = [];
 
-  // Try IndexedDB
   try {
     const db = await initIndexedDB();
     const tx = db.transaction(STORE_SCANS, 'readonly');
@@ -182,23 +261,15 @@ export async function getPendingOfflineScans(teamId?: string): Promise<OfflineSc
 
     items = await new Promise<OfflineScanQueueItem[]>((resolve) => {
       const req = store.getAll();
-      req.onsuccess = () => {
-        const all = req.result as OfflineScanQueueItem[] || [];
-        resolve(all.filter(i => !i.synced));
-      };
+      req.onsuccess = () => resolve((req.result as OfflineScanQueueItem[]) || []);
       req.onerror = () => resolve([]);
     });
-  } catch (e) {
-    // Fallback to localStorage
-  }
+  } catch (e) {}
 
   if (items.length === 0) {
     try {
       const raw = localStorage.getItem(LOCAL_QUEUE_KEY);
-      if (raw) {
-        const parsed: OfflineScanQueueItem[] = JSON.parse(raw);
-        items = parsed.filter(i => !i.synced);
-      }
+      if (raw) items = JSON.parse(raw);
     } catch (e) {}
   }
 
@@ -209,26 +280,21 @@ export async function getPendingOfflineScans(teamId?: string): Promise<OfflineSc
 }
 
 /**
- * Remove or mark scan item as synced
+ * Retrieve all pending (unsynced or review-required) offline scans
  */
-export async function markScanAsSynced(scanId: string): Promise<void> {
-  // Update LocalStorage
-  try {
-    const raw = localStorage.getItem(LOCAL_QUEUE_KEY);
-    if (raw) {
-      let parsed: OfflineScanQueueItem[] = JSON.parse(raw);
-      parsed = parsed.filter(i => i.id !== scanId);
-      localStorage.setItem(LOCAL_QUEUE_KEY, JSON.stringify(parsed));
-    }
-  } catch (e) {}
+export async function getPendingOfflineScans(teamId?: string): Promise<OfflineScanQueueItem[]> {
+  const all = await getAllOfflineScans(teamId);
+  return all.filter(i => i.status === 'LOCAL_SAVED' || i.status === 'SYNC_PENDING' || i.status === 'GPS_REVIEW_REQUIRED' || !i.synced);
+}
 
-  // Update IndexedDB
-  try {
-    const db = await initIndexedDB();
-    const tx = db.transaction(STORE_SCANS, 'readwrite');
-    const store = tx.objectStore(STORE_SCANS);
-    store.delete(scanId);
-  } catch (e) {}
+/**
+ * Mark scan as synced (backwards compatibility wrapper)
+ */
+export async function markScanAsSynced(scanId: string, serverMsg?: string, pts?: number): Promise<void> {
+  await updateOfflineScanStatus(scanId, 'SERVER_CONFIRMED', {
+    serverMessage: serverMsg || 'Terkonfirmasi server',
+    pointsAwarded: pts
+  });
 }
 
 /**

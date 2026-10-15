@@ -21,6 +21,7 @@ export interface Checkpoint {
   markerIcon?: string;
   markerCustomImage?: string;
   markerShape?: 'pin' | 'circle' | 'square' | 'shield' | 'hexagon';
+  radiusMeters?: number;
 }
 
 export interface TeamMember {
@@ -85,6 +86,8 @@ export interface EventItem {
   rules?: string[];
   minIntervalBetweenCheckpointsSeconds?: number;
   enforceMinInterval?: boolean;
+  visibility?: 'public' | 'private';
+  eventCode?: string;
   showScoreToParticipants?: boolean;
   showCertificateToParticipants?: boolean;
   showParticipantMap?: boolean;
@@ -100,10 +103,24 @@ export interface EventItem {
     defaultViolationPenaltyPoints?: number;
     defaultViolationPenaltyMinutes?: number;
   };
+  gpsPolicy?: {
+    required: boolean;
+    validationRadiusMeters: number;
+    maxAccuracyMeters: number;
+    allowRecreationalBypass?: boolean;
+  };
 }
+
+export type OfflineScanStatus = 
+  | 'LOCAL_SAVED'
+  | 'SYNC_PENDING'
+  | 'SERVER_CONFIRMED'
+  | 'REJECTED'
+  | 'GPS_REVIEW_REQUIRED';
 
 export interface ChallengeSubmission {
   id: string;
+  eventId?: string;
   teamId: string;
   teamName: string;
   checkpointId: string;

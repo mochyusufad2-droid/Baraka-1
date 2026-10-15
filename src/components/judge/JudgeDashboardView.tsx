@@ -465,13 +465,13 @@ export const JudgeDashboardView: React.FC<JudgeDashboardViewProps> = ({ onShowTo
               </div>
 
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-h-[360px] overflow-y-auto pr-1">
-                {checkpoints.map((cp) => {
+                {checkpoints.map((cp, idx) => {
                   const isSelected = cp.id === selectedPosId;
                   const teamsAtPos = teams.filter((t) => t.currentCheckpointId === cp.id).length;
 
                   return (
                     <div
-                      key={cp.id}
+                      key={`${cp.id}-${idx}`}
                       onClick={() => {
                         setSelectedPosId(cp.id);
                         setManualPosCodeInput(cp.id);
@@ -534,13 +534,13 @@ export const JudgeDashboardView: React.FC<JudgeDashboardViewProps> = ({ onShowTo
               </div>
 
               <div className="space-y-2.5 max-h-[360px] overflow-y-auto pr-1">
-                {teams.map((team) => {
+                {teams.map((team, idx) => {
                   const targetCp = checkpoints.find((c) => c.id === team.currentCheckpointId);
                   const coords = team.currentCoordinates || (targetCp ? targetCp.coordinates : { lat: -6.6350, lng: 106.8830 });
 
                   return (
                     <div
-                      key={team.id}
+                      key={`${team.id}-${idx}`}
                       className="p-3 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded-xl flex items-center justify-between gap-3 transition-colors"
                     >
                       <div className="flex items-center gap-2.5 min-w-0">
@@ -1290,9 +1290,9 @@ export const JudgeDashboardView: React.FC<JudgeDashboardViewProps> = ({ onShowTo
                 </div>
               ) : (
                 <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-                  {manualHistory.map((item) => (
+                  {manualHistory.map((item, idx) => (
                     <div 
-                      key={item.id} 
+                      key={`${item.id}-${idx}`} 
                       className={`p-3 rounded-xl border text-xs space-y-1 transition-colors ${
                         item.isPenalty ? 'bg-rose-50/50 border-rose-200' : 'bg-slate-50 border-slate-200'
                       }`}
@@ -1407,14 +1407,14 @@ export const JudgeDashboardView: React.FC<JudgeDashboardViewProps> = ({ onShowTo
                 </div>
               ) : (
                 <div className="space-y-3">
-                  {pendingSubmissions.map((sub) => {
+                  {pendingSubmissions.map((sub, idx) => {
                     const isSelected = selectedReview?.id === sub.id;
                     const hasPhoto = Boolean(sub.contentUrl || sub.type === 'photo');
                     const displayPhoto = sub.contentUrl || 'https://images.unsplash.com/photo-1526778548025-fa2f459cd5c1?auto=format&fit=crop&w=600&q=80';
 
                     return (
                       <div 
-                        key={sub.id}
+                        key={`${sub.id}-${idx}`}
                         onClick={() => setActiveReviewId(sub.id)}
                         className={`p-4 rounded-xl border transition-all cursor-pointer ${
                           isSelected 

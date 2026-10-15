@@ -15,6 +15,7 @@ import {
   MapPin
 } from 'lucide-react';
 import { Team, EventItem } from '../../types';
+import { exportLeaderboardToExcel, exportLeaderboardToCsv } from '../../utils/exportLeaderboard';
 
 interface LeaderboardPdfReportModalProps {
   isOpen: boolean;
@@ -59,63 +60,25 @@ export const LeaderboardPdfReportModal: React.FC<LeaderboardPdfReportModalProps>
     minute: '2-digit'
   }) + ' WIB';
 
-  // --- 1. Export CSV Handler ---
-  const handleExportCsv = () => {
-    const headers = [
-      'Peringkat',
-      'Nomor_BIB',
-      'Nama_Tim',
-      'Kategori',
-      'Ketua_Tim',
-      'Pos_Selesai',
-      'Total_Pos',
-      'Poin_Dasar_Pos',
-      'Bonus_Juri',
-      'Penalti_Poin',
-      'Penalti_Waktu_Menit',
-      'Total_Skor_Akhir',
-      'Durasi_Menit',
-      'Status_Tim',
-      'Pos_Terakhir',
-      'Waktu_Cetak'
-    ];
-
-    const rows = filteredTeams.map((t, idx) => [
-      idx + 1,
-      `"${t.bibNumber}"`,
-      `"${t.name.replace(/"/g, '""')}"`,
-      `"${t.category.replace(/"/g, '""')}"`,
-      `"${(t.members[0]?.name || '-').replace(/"/g, '""')}"`,
-      t.checkpointsCompleted,
-      t.totalCheckpoints,
-      t.points,
-      t.bonusPoints,
-      t.penaltyPoints,
-      t.penaltyMinutes || 0,
-      t.totalScore,
-      t.durationMinutes,
-      `"${t.status}"`,
-      `"${(t.lastPosName || '-').replace(/"/g, '""')}"`,
-      `"${currentDateStr} ${currentTimeStr}"`
-    ]);
-
-    const csvContent = [headers.join(','), ...rows.map((r) => r.join(','))].join('\n');
-    const blob = new Blob(['\uFEFF' + csvContent], { type: 'text/csv;charset=utf-8;' });
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement('a');
-    const cleanEventTitle = (event?.title || 'Laporan_Hasil_Lomba').replace(/[^a-zA-Z0-9_]/g, '_');
-    
-    link.setAttribute('href', url);
-    link.setAttribute('download', `Hasil_Leaderboard_${cleanEventTitle}_${new Date().toISOString().split('T')[0]}.csv`);
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
-    URL.revokeObjectURL(url);
-
-    onShowToast('📊 File Rekap Hasil Lomba (.CSV) berhasil diunduh!');
+  // --- 1. Export Excel Handler ---
+  const handleExportExcel = () => {
+    try {
+      const fileName = exportLeaderboardToExcel(filteredTeams, event, categoryFilter);
+      onShowToast(`📊 File Excel (.XLSX) "${fileName}" berhasil diunduh!`);
+    } catch (err) {
+      console.error('Failed to export Excel:', err);
+      onShowToast('Gagal mengunduh Excel. Mengalihkan ke CSV...');
+      handleExportCsv();
+    }
   };
 
-  // --- 2. Print / Export to PDF Handler ---
+  // --- 2. Export CSV Handler ---
+  const handleExportCsv = () => {
+    const fileName = exportLeaderboardToCsv(filteredTeams, event, categoryFilter);
+    onShowToast(`📑 File CSV "${fileName}" berhasil diunduh!`);
+  };
+
+  // --- 3. Print / Export to PDF Handler ---
   const handlePrintPdf = () => {
     window.print();
     onShowToast('🖨️ Menyiapkan dokumen laporan resmi untuk cetak / simpan ke PDF...');
@@ -132,9 +95,9 @@ export const LeaderboardPdfReportModal: React.FC<LeaderboardPdfReportModalProps>
               <FileText className="w-5 h-5" />
             </div>
             <div>
-              <h3 className="font-extrabold text-white text-base">Pratinjau Laporan PDF & CSV Leaderboard</h3>
+              <h3 className="font-extrabold text-white text-base">Pratinjau Laporan PDF, Excel & CSV Leaderboard</h3>
               <p className="text-xs text-slate-300">
-                Laporan resmi hasil perlombaan siap cetak / simpan PDF dan ekspor CSV data lengkap.
+                Laporan resmi hasil perlombaan siap cetak / simpan PDF dan ekspor Excel/CSV data lengkap.
               </p>
             </div>
           </div>
@@ -142,10 +105,21 @@ export const LeaderboardPdfReportModal: React.FC<LeaderboardPdfReportModalProps>
           <div className="flex items-center gap-2">
             <button
               type="button"
-              onClick={handleExportCsv}
+              onClick={handleExportExcel}
               className="px-3.5 py-2 bg-emerald-600 hover:bg-emerald-500 text-white rounded-xl text-xs font-bold shadow-md shadow-emerald-600/20 flex items-center gap-1.5 cursor-pointer transition-all"
+              title="Unduh file Excel (.xlsx)"
             >
-              <FileSpreadsheet className="w-4 h-4" />
+              <FileSpreadsheet className="w-4 h-4 text-emerald-200" />
+              <span className="hidden sm:inline">Ekspor Excel (.XLSX)</span>
+            </button>
+
+            <button
+              type="button"
+              onClick={handleExportCsv}
+              className="px-3 py-2 bg-teal-700 hover:bg-teal-600 text-white rounded-xl text-xs font-bold shadow-md shadow-teal-700/20 flex items-center gap-1.5 cursor-pointer transition-all"
+              title="Unduh file CSV"
+            >
+              <Download className="w-4 h-4 text-teal-200" />
               <span className="hidden sm:inline">Ekspor CSV</span>
             </button>
 

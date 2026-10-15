@@ -460,9 +460,9 @@ export const LiveRaceControlPanel: React.FC<LiveRaceControlPanelProps> = ({ onSh
         </div>
 
         <div className="space-y-2 max-h-40 overflow-y-auto pr-1">
-          {raceLogs.map((log) => (
+          {raceLogs.map((log, index) => (
             <div 
-              key={log.id}
+              key={`${log.id}-${index}`}
               className="p-2.5 rounded-xl bg-slate-800/70 border border-slate-700/60 flex items-start gap-3 text-xs"
             >
               <span className="font-mono text-[10px] text-orange-400 bg-slate-950 px-2 py-0.5 rounded font-bold shrink-0 mt-0.5">

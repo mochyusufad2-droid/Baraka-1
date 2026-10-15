@@ -30,9 +30,17 @@ export const CreateEventModal: React.FC<CreateEventModalProps> = ({
   const [showScoreToParticipants, setShowScoreToParticipants] = useState(true);
   const [showCertificateToParticipants, setShowCertificateToParticipants] = useState(true);
   const [showParticipantMap, setShowParticipantMap] = useState(true);
+  const [visibility, setVisibility] = useState<'public' | 'private'>('public');
+  const [eventCode, setEventCode] = useState<string>(() => `PRV-${Math.floor(1000 + Math.random() * 9000)}`);
   const [description, setDescription] = useState('');
 
   if (!isOpen) return null;
+
+  const handleGenerateCode = () => {
+    const code = `PRV-${Math.floor(1000 + Math.random() * 9000)}`;
+    setEventCode(code);
+    onShowToast(`Kode Event Privat diperbarui: ${code}`);
+  };
 
   const handleSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -40,6 +48,8 @@ export const CreateEventModal: React.FC<CreateEventModalProps> = ({
       onShowToast('Harap isi Nama Event dan Lokasi Acara.');
       return;
     }
+
+    const finalCode = eventCode.trim().toUpperCase() || `PRV-${Math.floor(1000 + Math.random() * 9000)}`;
 
     onSubmit({
       title: title.trim(),
@@ -57,6 +67,8 @@ export const CreateEventModal: React.FC<CreateEventModalProps> = ({
       showScoreToParticipants,
       showCertificateToParticipants,
       showParticipantMap,
+      visibility,
+      eventCode: finalCode,
       rules: [
         'Setiap tim wajib beranggotakan lengkap saat tiba dan memindai barcode di pos.',
         'Dilarang menggunakan kendaraan bermotor selama rute balapan, peserta wajib berjalan atau berlari.',
@@ -101,6 +113,81 @@ export const CreateEventModal: React.FC<CreateEventModalProps> = ({
               onChange={(e) => setTitle(e.target.value)}
               className="w-full px-3.5 py-2.5 bg-slate-50 border border-slate-300 rounded-xl text-slate-800 text-xs sm:text-sm focus:outline-none focus:ring-2 focus:ring-orange-500"
             />
+          </div>
+
+          {/* Visibilitas Event (Publik vs Private) */}
+          <div className="p-3.5 bg-indigo-50/70 border border-indigo-200 rounded-2xl space-y-3">
+            <label className="font-extrabold text-indigo-950 text-xs block">
+              Akses & Visibilitas Event Pendaftaran:
+            </label>
+            <div className="grid grid-cols-2 gap-2">
+              <button
+                type="button"
+                onClick={() => setVisibility('public')}
+                className={`p-2.5 rounded-xl border text-left cursor-pointer transition-all ${
+                  visibility === 'public'
+                    ? 'bg-white border-orange-500 ring-2 ring-orange-400 shadow-xs'
+                    : 'bg-white/60 border-slate-200 text-slate-600 hover:bg-white'
+                }`}
+              >
+                <div className="font-bold text-xs text-slate-900 flex items-center gap-1.5">
+                  <span>🌐 Publish Event (Publik)</span>
+                </div>
+                <p className="text-[10px] text-slate-500 mt-0.5 leading-tight">
+                  Muncul di pilihan event umum saat pendaftaran peserta.
+                </p>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => setVisibility('private')}
+                className={`p-2.5 rounded-xl border text-left cursor-pointer transition-all ${
+                  visibility === 'private'
+                    ? 'bg-white border-indigo-600 ring-2 ring-indigo-400 shadow-xs'
+                    : 'bg-white/60 border-slate-200 text-slate-600 hover:bg-white'
+                }`}
+              >
+                <div className="font-bold text-xs text-indigo-950 flex items-center gap-1.5">
+                  <span>🔒 Private Event (Privat)</span>
+                </div>
+                <p className="text-[10px] text-slate-500 mt-0.5 leading-tight">
+                  Sembunyi dari umum. Peserta butuh Kode Event untuk daftar.
+                </p>
+              </button>
+            </div>
+
+            {visibility === 'private' && (
+              <div className="bg-white p-3 rounded-xl border border-indigo-200 space-y-2 animate-in fade-in duration-150">
+                <div className="flex items-center justify-between">
+                  <label className="font-bold text-xs text-indigo-950">
+                    Kode Event Akses Privat:
+                  </label>
+                  <button
+                    type="button"
+                    onClick={handleGenerateCode}
+                    className="text-[10px] font-bold text-indigo-600 hover:text-indigo-800 underline cursor-pointer"
+                  >
+                    Acak Kode Baru
+                  </button>
+                </div>
+                <div className="flex items-center gap-2">
+                  <input
+                    type="text"
+                    required={visibility === 'private'}
+                    value={eventCode}
+                    onChange={(e) => setEventCode(e.target.value.toUpperCase())}
+                    placeholder="Contoh: PRV-8821"
+                    className="flex-1 px-3 py-2 bg-slate-50 border border-indigo-300 rounded-lg text-slate-900 font-mono font-bold text-sm tracking-wider focus:outline-none focus:ring-2 focus:ring-indigo-500 uppercase"
+                  />
+                  <span className="px-2.5 py-2 bg-indigo-100 text-indigo-800 font-mono font-extrabold text-xs rounded-lg shrink-0">
+                    KODE PRIVAT
+                  </span>
+                </div>
+                <p className="text-[10px] text-indigo-700 leading-relaxed">
+                  Bagikan kode di atas kepada peserta Anda. Saat pendaftaran, peserta harus memilih "Masukkan Kode Event Privat" dan mengetikkan kode ini.
+                </p>
+              </div>
+            )}
           </div>
 
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">

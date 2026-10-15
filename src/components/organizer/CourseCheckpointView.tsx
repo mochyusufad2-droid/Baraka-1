@@ -293,9 +293,9 @@ export const CourseCheckpointView: React.FC<CourseCheckpointViewProps> = ({ onSh
               </button>
             </div>
           ) : (
-            checkpoints.map((cp) => (
+            checkpoints.map((cp, index) => (
               <div 
-                key={cp.id}
+                key={`${cp.id}-${index}`}
                 className="bg-white rounded-2xl p-4 sm:p-5 border border-slate-200 shadow-sm hover:border-orange-300 transition-all"
               >
                 <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-5">

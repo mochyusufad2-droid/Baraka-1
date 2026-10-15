@@ -186,6 +186,177 @@ export const InteractiveCompassMap: React.FC<InteractiveCompassMapProps> = ({
     }
   };
 
+  // Leaflet map container & instance refs
+  const mapContainerRef = useRef<HTMLDivElement | null>(null);
+  const mapInstanceRef = useRef<L.Map | null>(null);
+  const tileLayerRef = useRef<L.TileLayer | null>(null);
+  const markersLayerRef = useRef<L.LayerGroup | null>(null);
+  const routeLayerRef = useRef<L.Polyline | null>(null);
+  const userMarkerRef = useRef<L.Marker | null>(null);
+
+  // Initialize and update Leaflet Map
+  useEffect(() => {
+    if (!showDigitalMap || !mapContainerRef.current) return;
+
+    // Center coordinates
+    const initialLat = currentTargetCp?.coordinates?.lat || -6.6341;
+    const initialLng = currentTargetCp?.coordinates?.lng || 106.8821;
+
+    // Create Leaflet instance if not created
+    if (!mapInstanceRef.current) {
+      const map = L.map(mapContainerRef.current, {
+        center: [initialLat, initialLng],
+        zoom: 16,
+        zoomControl: false, // Custom styled zoom controls
+        attributionControl: false,
+      });
+
+      // Attribution small text at corner
+      L.control.attribution({ position: 'bottomright', prefix: '© OpenStreetMap' }).addTo(map);
+
+      mapInstanceRef.current = map;
+      markersLayerRef.current = L.layerGroup().addTo(map);
+    }
+
+    const map = mapInstanceRef.current;
+
+    // Tile Layer Setup
+    if (tileLayerRef.current) {
+      map.removeLayer(tileLayerRef.current);
+    }
+
+    let tileUrl = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
+    let tileMaxZoom = 19;
+
+    if (mapTileStyle === 'topo') {
+      tileUrl = 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png';
+      tileMaxZoom = 17;
+    } else if (mapTileStyle === 'satellite') {
+      tileUrl = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
+      tileMaxZoom = 18;
+    }
+
+    const newTileLayer = L.tileLayer(tileUrl, {
+      maxZoom: tileMaxZoom,
+      subdomains: mapTileStyle === 'topo' ? ['a', 'b', 'c'] : ['a', 'b', 'c'],
+    }).addTo(map);
+
+    tileLayerRef.current = newTileLayer;
+
+    // Clear old markers
+    if (markersLayerRef.current) {
+      markersLayerRef.current.clearLayers();
+    }
+
+    // Coordinates array for route polyline and map bounds
+    const routeCoords: [number, number][] = [];
+    const bounds = L.latLngBounds([]);
+
+    // 1. Plot Checkpoint Markers
+    checkpoints.forEach((cp, idx) => {
+      const lat = cp.coordinates?.lat || initialLat + (idx * 0.002);
+      const lng = cp.coordinates?.lng || initialLng + (idx * 0.0025);
+      routeCoords.push([lat, lng]);
+      bounds.extend([lat, lng]);
+
+      const isCompleted = idx < currentTeam.checkpointsCompleted;
+      const isCurrent = idx === currentTeam.checkpointsCompleted;
+      const isSelected = selectedMapCp.id === cp.id;
+
+      // Custom divIcon marker with rich styling
+      const markerHtml = `
+        <div class="relative group cursor-pointer transition-transform duration-200 ${isSelected ? 'scale-125 z-50' : 'z-20 hover:scale-110'}">
+          ${isCurrent ? '<div class="absolute -inset-1.5 rounded-full bg-orange-500/40 animate-ping"></div>' : ''}
+          <div class="w-8 h-8 rounded-2xl flex items-center justify-center font-extrabold text-xs shadow-lg border-2 ${
+            isCompleted
+              ? 'bg-emerald-600 text-white border-white ring-2 ring-emerald-400'
+              : isCurrent
+              ? 'bg-gradient-to-tr from-orange-600 to-amber-500 text-white border-white ring-4 ring-orange-400/60'
+              : 'bg-slate-900 text-slate-200 border-slate-700'
+          }">
+            ${isCompleted ? '✓' : cp.number}
+          </div>
+          <div class="absolute -bottom-5 left-1/2 -translate-x-1/2 whitespace-nowrap px-1.5 py-0.5 rounded text-[9px] font-bold shadow-md ${
+            isCurrent
+              ? 'bg-orange-600 text-white'
+              : 'bg-slate-900/90 text-slate-200 border border-slate-700'
+          }">
+            Pos ${cp.number}
+          </div>
+        </div>
+      `;
+
+      const customIcon = L.divIcon({
+        className: 'custom-cp-marker',
+        html: markerHtml,
+        iconSize: [32, 32],
+        iconAnchor: [16, 16],
+      });
+
+      const marker = L.marker([lat, lng], { icon: customIcon });
+
+      marker.on('click', () => {
+        setSelectedMapCp(cp);
+        onSelectCheckpoint(cp);
+        const newBearing = calculateBearing(userLocation.lat, userLocation.lng, lat, lng);
+        setCompassHeading(newBearing);
+      });
+
+      markersLayerRef.current?.addLayer(marker);
+    });
+
+    // 2. Plot User's Simulated / Real Position Marker
+    const userMarkerHtml = `
+      <div class="relative flex items-center justify-center">
+        <div class="w-8 h-8 rounded-full bg-blue-500/25 animate-ping absolute"></div>
+        <div class="w-5 h-5 rounded-full bg-blue-600 border-2 border-white shadow-xl flex items-center justify-center text-[10px] font-bold text-white ring-2 ring-blue-400">
+          📍
+        </div>
+        <div class="absolute -bottom-4.5 bg-blue-900/90 text-white text-[9px] font-bold px-1.5 py-0.2 rounded shadow whitespace-nowrap">
+          Regu Anda
+        </div>
+      </div>
+    `;
+
+    const userIcon = L.divIcon({
+      className: 'custom-user-marker',
+      html: userMarkerHtml,
+      iconSize: [24, 24],
+      iconAnchor: [12, 12],
+    });
+
+    if (userMarkerRef.current) {
+      map.removeLayer(userMarkerRef.current);
+    }
+
+    userMarkerRef.current = L.marker([userLocation.lat, userLocation.lng], { icon: userIcon }).addTo(map);
+    bounds.extend([userLocation.lat, userLocation.lng]);
+
+    // 3. Plot Trail Polyline Route
+    if (routeLayerRef.current) {
+      map.removeLayer(routeLayerRef.current);
+    }
+
+    if (showRouteLine && routeCoords.length > 1) {
+      routeLayerRef.current = L.polyline(routeCoords, {
+        color: '#f97316',
+        weight: 3.5,
+        opacity: 0.85,
+        dashArray: '6, 8',
+      }).addTo(map);
+    }
+
+    // Auto fit bounds on initial mount
+    if (bounds.isValid()) {
+      map.fitBounds(bounds, { padding: [40, 40] });
+    }
+
+    // Cleanup on unmount
+    return () => {
+      // Keep map reference for hot renders or cleanup
+    };
+  }, [showDigitalMap, checkpoints, currentTeam.checkpointsCompleted, selectedMapCp.id, mapTileStyle, showRouteLine, userLocation]);
+
   // IF DIGITAL MAP IS DISABLED BY ORGANIZER -> RENDER PRINTED PAPER MAP GUIDANCE VIEW
   if (!showDigitalMap) {
     return (
@@ -284,7 +455,7 @@ export const InteractiveCompassMap: React.FC<InteractiveCompassMapProps> = ({
 
               return (
                 <div
-                  key={cp.id}
+                  key={`${cp.id}-${idx}`}
                   className={`p-3.5 rounded-2xl border transition-all ${
                     isDone 
                       ? 'bg-emerald-50/70 border-emerald-200' 
@@ -348,195 +519,6 @@ export const InteractiveCompassMap: React.FC<InteractiveCompassMapProps> = ({
       </div>
     );
   }
-
-  // Leaflet map container & instance refs
-  const mapContainerRef = useRef<HTMLDivElement | null>(null);
-  const mapInstanceRef = useRef<L.Map | null>(null);
-  const tileLayerRef = useRef<L.TileLayer | null>(null);
-  const markersLayerRef = useRef<L.LayerGroup | null>(null);
-  const routeLayerRef = useRef<L.Polyline | null>(null);
-  const userMarkerRef = useRef<L.Marker | null>(null);
-
-  // Initialize and update Leaflet Map
-  useEffect(() => {
-    if (!mapContainerRef.current) return;
-
-    // Center coordinates
-    const initialLat = currentTargetCp?.coordinates?.lat || -6.6341;
-    const initialLng = currentTargetCp?.coordinates?.lng || 106.8821;
-
-    // Create Leaflet instance if not created
-    if (!mapInstanceRef.current) {
-      const map = L.map(mapContainerRef.current, {
-        center: [initialLat, initialLng],
-        zoom: 16,
-        zoomControl: false, // Custom styled zoom controls
-        attributionControl: false,
-      });
-
-      // Attribution small text at corner
-      L.control.attribution({ position: 'bottomright', prefix: '© OpenStreetMap' }).addTo(map);
-
-      mapInstanceRef.current = map;
-      markersLayerRef.current = L.layerGroup().addTo(map);
-    }
-
-    const map = mapInstanceRef.current;
-
-    // Tile Layer Setup
-    if (tileLayerRef.current) {
-      map.removeLayer(tileLayerRef.current);
-    }
-
-    let tileUrl = 'https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png';
-    let tileMaxZoom = 19;
-
-    if (mapTileStyle === 'topo') {
-      tileUrl = 'https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png';
-      tileMaxZoom = 17;
-    } else if (mapTileStyle === 'satellite') {
-      tileUrl = 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}';
-      tileMaxZoom = 18;
-    }
-
-    const newTileLayer = L.tileLayer(tileUrl, {
-      maxZoom: tileMaxZoom,
-      subdomains: mapTileStyle === 'topo' ? ['a', 'b', 'c'] : ['a', 'b', 'c'],
-    }).addTo(map);
-
-    tileLayerRef.current = newTileLayer;
-
-    // Clear old markers
-    if (markersLayerRef.current) {
-      markersLayerRef.current.clearLayers();
-    }
-
-    // Coordinates array for route polyline and map bounds
-    const routeCoords: [number, number][] = [];
-    const bounds = L.latLngBounds([]);
-
-    // 1. Plot Checkpoint Markers
-    checkpoints.forEach((cp, idx) => {
-      const lat = cp.coordinates?.lat || initialLat + (idx * 0.002);
-      const lng = cp.coordinates?.lng || initialLng + (idx * 0.0025);
-      routeCoords.push([lat, lng]);
-      bounds.extend([lat, lng]);
-
-      const isCompleted = idx < currentTeam.checkpointsCompleted;
-      const isCurrent = idx === currentTeam.checkpointsCompleted;
-      const isSelected = selectedMapCp.id === cp.id;
-
-      // Custom divIcon marker with rich styling
-      const markerHtml = `
-        <div class="relative group cursor-pointer transition-transform duration-200 ${isSelected ? 'scale-125 z-50' : 'z-20 hover:scale-110'}">
-          ${isCurrent ? '<div class="absolute -inset-1.5 rounded-full bg-orange-500/40 animate-ping"></div>' : ''}
-          <div class="w-8 h-8 rounded-2xl flex items-center justify-center font-extrabold text-xs shadow-lg border-2 ${
-            isCompleted
-              ? 'bg-emerald-600 text-white border-white ring-2 ring-emerald-400'
-              : isCurrent
-              ? 'bg-gradient-to-tr from-orange-600 to-amber-500 text-white border-white ring-4 ring-orange-400/60'
-              : 'bg-slate-900 text-slate-200 border-slate-700'
-          }">
-            ${isCompleted ? '✓' : cp.number}
-          </div>
-          <div class="absolute -bottom-5 left-1/2 -translate-x-1/2 whitespace-nowrap px-1.5 py-0.5 rounded text-[9px] font-bold shadow-md ${
-            isCurrent
-              ? 'bg-orange-600 text-white'
-              : 'bg-slate-900/90 text-slate-200 border border-slate-700'
-          }">
-            Pos ${cp.number}
-          </div>
-        </div>
-      `;
-
-      const customIcon = L.divIcon({
-        className: 'custom-checkpoint-marker',
-        html: markerHtml,
-        iconSize: [32, 32],
-        iconAnchor: [16, 16],
-        popupAnchor: [0, -18],
-      });
-
-      const marker = L.marker([lat, lng], { icon: customIcon });
-
-      // Interactive popup
-      const popupContent = `
-        <div class="p-1 text-slate-900 font-sans min-w-[180px]">
-          <div class="flex items-center justify-between gap-1 mb-1">
-            <span class="font-extrabold text-xs text-orange-600">POS #${cp.number}</span>
-            <span class="text-[10px] font-bold px-1.5 py-0.2 rounded ${isCompleted ? 'bg-emerald-100 text-emerald-800' : 'bg-orange-100 text-orange-800'}">
-              ${isCompleted ? 'Tuntas' : isCurrent ? 'Pos Aktif' : 'Terkunci'}
-            </span>
-          </div>
-          <div class="font-bold text-xs text-slate-900">${cp.name}</div>
-          <div class="text-[10px] text-slate-500 mt-0.5">${cp.locationName || 'Area Terbuka'}</div>
-          ${cp.clue ? `<div class="text-[10px] italic text-slate-600 mt-1 bg-slate-50 p-1.5 rounded border border-slate-200">"${cp.clue}"</div>` : ''}
-        </div>
-      `;
-
-      marker.bindPopup(popupContent);
-
-      marker.on('click', () => {
-        setSelectedMapCp(cp);
-        onSelectCheckpoint(cp);
-        const newBearing = calculateBearing(userLocation.lat, userLocation.lng, lat, lng);
-        setCompassHeading(newBearing);
-      });
-
-      markersLayerRef.current?.addLayer(marker);
-    });
-
-    // 2. Plot User's Simulated / Real Position Marker
-    const userMarkerHtml = `
-      <div class="relative flex items-center justify-center">
-        <div class="w-8 h-8 rounded-full bg-blue-500/25 animate-ping absolute"></div>
-        <div class="w-5 h-5 rounded-full bg-blue-600 border-2 border-white shadow-xl flex items-center justify-center text-[10px] font-bold text-white ring-2 ring-blue-400">
-          📍
-        </div>
-        <div class="absolute -bottom-4.5 bg-blue-900/90 text-white text-[9px] font-bold px-1.5 py-0.2 rounded shadow whitespace-nowrap">
-          Regu Anda
-        </div>
-      </div>
-    `;
-
-    const userIcon = L.divIcon({
-      className: 'custom-user-marker',
-      html: userMarkerHtml,
-      iconSize: [24, 24],
-      iconAnchor: [12, 12],
-    });
-
-    if (userMarkerRef.current) {
-      map.removeLayer(userMarkerRef.current);
-    }
-
-    userMarkerRef.current = L.marker([userLocation.lat, userLocation.lng], { icon: userIcon }).addTo(map);
-    bounds.extend([userLocation.lat, userLocation.lng]);
-
-    // 3. Plot Trail Polyline Route
-    if (routeLayerRef.current) {
-      map.removeLayer(routeLayerRef.current);
-    }
-
-    if (showRouteLine && routeCoords.length > 1) {
-      routeLayerRef.current = L.polyline(routeCoords, {
-        color: '#f97316',
-        weight: 3.5,
-        opacity: 0.85,
-        dashArray: '6, 8',
-      }).addTo(map);
-    }
-
-    // Auto fit bounds on initial mount
-    if (bounds.isValid()) {
-      map.fitBounds(bounds, { padding: [40, 40] });
-    }
-
-    // Cleanup on unmount
-    return () => {
-      // Keep map reference for hot renders or cleanup
-    };
-  }, [checkpoints, currentTeam.checkpointsCompleted, selectedMapCp.id, mapTileStyle, showRouteLine, userLocation]);
 
   // Rotate Compass
   const rotateCompass = (delta: number) => {
@@ -870,7 +852,7 @@ export const InteractiveCompassMap: React.FC<InteractiveCompassMapProps> = ({
                 const isSelected = selectedMapCp.id === cp.id;
                 return (
                   <button
-                    key={cp.id}
+                    key={`${cp.id}-${idx}`}
                     type="button"
                     onClick={() => {
                       setSelectedMapCp(cp);

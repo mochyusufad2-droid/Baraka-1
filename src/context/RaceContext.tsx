@@ -1,5 +1,15 @@
 import React, { createContext, useContext, useState, useEffect } from 'react';
-import { EventItem, Checkpoint, Team, ChallengeSubmission, RaceControlStatus, RaceLog, RaceBroadcast, SosAlert } from '../types';
+import { 
+  EventItem, 
+  Checkpoint, 
+  Team, 
+  ChallengeSubmission, 
+  RaceControlStatus, 
+  RaceLog, 
+  RaceBroadcast, 
+  SosAlert,
+  CheckpointVisit 
+} from '../types';
 import { safeSetItem, safeGetItem, safeRemoveItem } from '../utils/storage';
 import { compressImageDataUrl } from '../utils/imageCompressor';
 import { saveParticipantRaceCache } from '../utils/participantOfflineManager';
@@ -9,6 +19,11 @@ import {
   DEMO_TEAMS, 
   DEMO_SUBMISSIONS 
 } from '../data/demoData';
+import { auth, googleProvider, testFirestoreConnection } from '../firebase/config';
+import { firestoreService, SyncStatus } from '../firebase/firestoreService';
+import { onAuthStateChanged, signInWithPopup, signOut, User as FirebaseUser } from 'firebase/auth';
+
+export type UserRole = 'organizer' | 'judge' | 'participant' | 'guest';
 
 interface RaceContextType {
   events: EventItem[];
@@ -18,6 +33,21 @@ interface RaceContextType {
   activeTeamId: string | null;
   selectedEventId: string;
   setSelectedEventId: (id: string) => void;
+
+  // Firebase Realtime & Sync State
+  syncStatus: SyncStatus;
+  firebaseUser: FirebaseUser | null;
+  signInWithGoogle: () => Promise<{ success: boolean; message?: string }>;
+  signOutFirebase: () => Promise<void>;
+
+  // RBAC & Role Auth
+  currentUserRole: UserRole;
+  adminPassword: string;
+  judgePassword: string;
+  loginAsRole: (role: 'organizer' | 'judge', passwordInput: string) => { success: boolean; message: string };
+  logoutRole: () => void;
+  updateRolePasswords: (newAdminPass?: string, newJudgePass?: string) => void;
+  hasAccess: (requiredRole: 'organizer' | 'judge') => boolean;
   
   // Race Control & Timer
   raceStatus: RaceControlStatus;
@@ -49,29 +79,33 @@ interface RaceContextType {
   deleteTeam: (teamId: string) => void;
   
   // Participant Session
-  loginParticipant: (bibNumber: string, pinCode: string) => { success: boolean; team?: Team; message?: string };
+  loginParticipant: (bibNumber: string, pinCode: string) => Promise<{ success: boolean; team?: Team; message?: string; sessionToken?: string }>;
   logoutParticipant: () => void;
   setActiveTeamId: (teamId: string | null) => void;
   
   // Checkpoint & Race Actions
-  checkInCheckpoint: (teamId: string, checkpointId: string, bypassCooldown?: boolean) => { 
+  checkInCheckpoint: (teamId: string, checkpointId: string, bypassCooldown?: boolean, gpsCoords?: { lat: number; lng: number; accuracy?: number }) => Promise<{ 
     success: boolean; 
     pointsAwarded: number; 
     checkpointName: string;
     isCooldown?: boolean;
     isLocked?: boolean;
+    isDuplicate?: boolean;
+    code?: string;
     remainingSeconds?: number;
     message?: string;
-  };
-  checkInByQrCode: (teamId: string, qrCodeInput: string, bypassCooldown?: boolean) => { 
+  }>;
+  checkInByQrCode: (teamId: string, qrCodeInput: string, bypassCooldown?: boolean, gpsCoords?: { lat: number; lng: number; accuracy?: number }) => Promise<{ 
     success: boolean; 
     pointsAwarded: number; 
     checkpointName: string; 
     message: string;
     isCooldown?: boolean;
     isLocked?: boolean;
+    isDuplicate?: boolean;
+    code?: string;
     remainingSeconds?: number;
-  };
+  }>;
   getTeamRemainingCooldown: (teamId: string) => {
     inCooldown: boolean;
     remainingSeconds: number;
@@ -110,6 +144,7 @@ interface RaceContextType {
   deleteCheckpoint: (checkpointId: string) => void;
   batchUpdateCheckpointPoints: (points: number) => void;
   resetToDemoData: () => void;
+  refreshDataFromStorage: () => void;
 }
 
 const RaceContext = createContext<RaceContextType | undefined>(undefined);
@@ -153,6 +188,11 @@ const DEFAULT_BROADCASTS: RaceBroadcast[] = [
 ];
 
 export const RaceProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
+  // 1. Sync & Auth States
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>('syncing');
+  const [firebaseUser, setFirebaseUser] = useState<FirebaseUser | null>(null);
+
+  // 2. Data States with Local Cache fallback
   const [events, setEvents] = useState<EventItem[]>(() => {
     const saved = safeGetItem(STORAGE_KEYS.EVENTS);
     return saved ? JSON.parse(saved) : DEMO_EVENTS;
@@ -177,7 +217,28 @@ export const RaceProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return safeGetItem(STORAGE_KEYS.ACTIVE_TEAM) || 'team-01';
   });
 
-  const [selectedEventId, setSelectedEventId] = useState<string>('evt-01');
+  const [selectedEventId, setSelectedEventIdState] = useState<string>(() => {
+    return safeGetItem('racepoint_selected_event_id_v1') || 'evt-01';
+  });
+
+  const setSelectedEventId = (id: string) => {
+    setSelectedEventIdState(id);
+    safeSetItem('racepoint_selected_event_id_v1', id);
+  };
+
+  // RBAC & Role Auth State
+  const [currentUserRole, setCurrentUserRole] = useState<UserRole>(() => {
+    const saved = safeGetItem('racepoint_user_role_v1');
+    return (saved as UserRole) || 'organizer';
+  });
+
+  const [adminPassword, setAdminPassword] = useState<string>(() => {
+    return safeGetItem('racepoint_admin_pass_v1') || 'admin123';
+  });
+
+  const [judgePassword, setJudgePassword] = useState<string>(() => {
+    return safeGetItem('racepoint_judge_pass_v1') || 'juri123';
+  });
 
   // Race Control & Timer State
   const [raceStatus, setRaceStatus] = useState<RaceControlStatus>(() => {
@@ -187,7 +248,7 @@ export const RaceProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const [raceElapsedSeconds, setRaceElapsedSeconds] = useState<number>(() => {
     const saved = safeGetItem(STORAGE_KEYS.RACE_SECONDS);
-    return saved ? Number(saved) : 6120; // 1 hour 42 mins
+    return saved ? Number(saved) : 6120;
   });
 
   const [raceLogs, setRaceLogs] = useState<RaceLog[]>(() => {
@@ -195,45 +256,191 @@ export const RaceProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return saved ? JSON.parse(saved) : DEFAULT_LOGS;
   });
 
+  const [broadcasts, setBroadcasts] = useState<RaceBroadcast[]>(() => {
+    const saved = safeGetItem(STORAGE_KEYS.BROADCASTS);
+    return saved ? JSON.parse(saved) : DEFAULT_BROADCASTS;
+  });
+
   const [sosAlerts, setSosAlerts] = useState<SosAlert[]>(() => {
     const saved = safeGetItem('racepoint_sos_alerts_v1');
     return saved ? JSON.parse(saved) : [];
   });
 
+  // Track Firebase Auth
   useEffect(() => {
-    safeSetItem('racepoint_sos_alerts_v1', JSON.stringify(sosAlerts));
-  }, [sosAlerts]);
+    const unsubAuth = onAuthStateChanged(auth, (user) => {
+      setFirebaseUser(user);
+      if (user) {
+        if (user.email === 'mochyusuf.ad2@gmail.com') {
+          setCurrentUserRole('organizer');
+          safeSetItem('racepoint_user_role_v1', 'organizer');
+        }
+      }
+    });
 
-  const triggerSos = (teamId: string, coordinates: { lat: number; lng: number }) => {
-    const team = teams.find(t => t.id === teamId);
-    if (!team) return;
-    const now = Date.now();
-    const timeString = new Date(now).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' WIB';
-    
-    const newAlert: SosAlert = {
-      id: `sos-${Date.now()}`,
-      teamId: team.id,
-      teamName: team.name,
-      bibNumber: team.bibNumber,
-      timestamp: now,
-      timeString,
-      coordinates,
-      status: 'active'
+    const unsubStatus = firestoreService.onSyncStatusChange((st) => {
+      setSyncStatus(st);
+    });
+
+    return () => {
+      unsubAuth();
+      unsubStatus();
     };
+  }, []);
 
-    setSosAlerts(prev => [newAlert, ...prev]);
+  // 1. Initial Firestore Setup & Global Events Listener (Runs once on mount)
+  useEffect(() => {
+    let isMounted = true;
+    let unsubEvents: (() => void) | null = null;
 
-    const newLog: RaceLog = {
-      id: `log-sos-${Date.now()}`,
-      time: timeString,
-      message: `🚨 DARURAT (SOS): Tim ${team.name} (${team.bibNumber}) mengirim sinyal darurat dari koordinat [${coordinates.lat.toFixed(4)}, ${coordinates.lng.toFixed(4)}]!`,
-      type: 'system'
+    async function initFirestore() {
+      try {
+        await testFirestoreConnection();
+        await firestoreService.seedInitialDataIfEmpty();
+      } catch (err) {
+        console.warn('Initial Firestore seeding check encountered a minor warning:', err);
+      }
+
+      if (isMounted) {
+        unsubEvents = firestoreService.subscribeEvents((newEvents) => {
+          if (isMounted && newEvents.length > 0) setEvents(newEvents);
+        });
+      }
+    }
+
+    initFirestore();
+
+    return () => {
+      isMounted = false;
+      if (unsubEvents) unsubEvents();
     };
-    setRaceLogs(prev => [newLog, ...prev]);
+  }, []);
+
+  // 2. Multi-Event Isolated Listeners (Re-subscribes cleanly whenever selectedEventId changes)
+  useEffect(() => {
+    let isMounted = true;
+    if (!selectedEventId) return;
+
+    // Filter all realtime listeners strictly by selectedEventId
+    const unsubCps = firestoreService.subscribeCheckpoints((newCps) => {
+      if (isMounted) {
+        if (newCps.length > 0) {
+          setCheckpoints(newCps);
+        } else {
+          const fallback = DEMO_CHECKPOINTS.filter(c => (c as any).eventId === selectedEventId || selectedEventId === 'evt-01');
+          setCheckpoints(fallback);
+        }
+      }
+    }, selectedEventId);
+
+    const unsubTeams = firestoreService.subscribeTeams((newTeams) => {
+      if (isMounted) {
+        if (newTeams.length > 0) {
+          setTeams(newTeams);
+        } else {
+          const fallback = DEMO_TEAMS.filter(t => (t as any).eventId === selectedEventId || selectedEventId === 'evt-01');
+          setTeams(fallback);
+        }
+      }
+    }, selectedEventId);
+
+    const unsubSubs = firestoreService.subscribeSubmissions((newSubs) => {
+      if (isMounted) setSubmissions(newSubs);
+    }, selectedEventId);
+
+    const unsubLogs = firestoreService.subscribeLogs((newLogs) => {
+      if (isMounted) setRaceLogs(newLogs);
+    }, selectedEventId);
+
+    const unsubBc = firestoreService.subscribeBroadcasts((newBc) => {
+      if (isMounted) setBroadcasts(newBc);
+    }, selectedEventId);
+
+    const unsubSos = firestoreService.subscribeSosAlerts((newSos) => {
+      if (isMounted) setSosAlerts(newSos);
+    }, selectedEventId);
+
+    return () => {
+      isMounted = false;
+      unsubCps();
+      unsubTeams();
+      unsubSubs();
+      unsubLogs();
+      unsubBc();
+      unsubSos();
+    };
+  }, [selectedEventId]);
+
+  // Google Login / Signout helpers
+  const signInWithGoogle = async () => {
+    try {
+      setSyncStatus('syncing');
+      const cred = await signInWithPopup(auth, googleProvider);
+      if (cred.user.email === 'mochyusuf.ad2@gmail.com') {
+        setCurrentUserRole('organizer');
+        safeSetItem('racepoint_user_role_v1', 'organizer');
+      }
+      setSyncStatus('synced');
+      return { success: true, message: `Berhasil login dengan akun Google: ${cred.user.displayName || cred.user.email}` };
+    } catch (err) {
+      setSyncStatus('error');
+      return { success: false, message: `Gagal login Google: ${err instanceof Error ? err.message : String(err)}` };
+    }
   };
 
-  const resolveSos = (alertId: string) => {
-    setSosAlerts(prev => prev.map(a => a.id === alertId ? { ...a, status: 'resolved' } : a));
+  const signOutFirebase = async () => {
+    await signOut(auth);
+    setFirebaseUser(null);
+    setCurrentUserRole('guest');
+    safeSetItem('racepoint_user_role_v1', 'guest');
+  };
+
+  // RBAC Actions
+  const loginAsRole = (role: 'organizer' | 'judge', passwordInput: string) => {
+    const cleanPass = passwordInput.trim();
+    if (role === 'organizer') {
+      if (cleanPass === adminPassword) {
+        setCurrentUserRole('organizer');
+        safeSetItem('racepoint_user_role_v1', 'organizer');
+        return { success: true, message: 'Berhasil login sebagai Panitia (Organizer Admin)!' };
+      }
+      return { success: false, message: 'Password Panitia / Admin salah! Silakan coba lagi.' };
+    } else if (role === 'judge') {
+      if (cleanPass === judgePassword || cleanPass === adminPassword) {
+        setCurrentUserRole('judge');
+        safeSetItem('racepoint_user_role_v1', 'judge');
+        return { success: true, message: 'Berhasil login sebagai Juri Pos / Fasilitator!' };
+      }
+      return { success: false, message: 'Password Juri Pos salah! Silakan coba lagi.' };
+    }
+    return { success: false, message: 'Peran tidak dikenali.' };
+  };
+
+  const logoutRole = () => {
+    setCurrentUserRole('guest');
+    safeSetItem('racepoint_user_role_v1', 'guest');
+  };
+
+  const updateRolePasswords = (newAdminPass?: string, newJudgePass?: string) => {
+    if (newAdminPass && newAdminPass.trim().length > 0) {
+      setAdminPassword(newAdminPass.trim());
+      safeSetItem('racepoint_admin_pass_v1', newAdminPass.trim());
+    }
+    if (newJudgePass && newJudgePass.trim().length > 0) {
+      setJudgePassword(newJudgePass.trim());
+      safeSetItem('racepoint_judge_pass_v1', newJudgePass.trim());
+    }
+  };
+
+  const hasAccess = (requiredRole: 'organizer' | 'judge') => {
+    if (firebaseUser?.email === 'mochyusuf.ad2@gmail.com') return true;
+    if (requiredRole === 'organizer') {
+      return currentUserRole === 'organizer';
+    }
+    if (requiredRole === 'judge') {
+      return currentUserRole === 'judge' || currentUserRole === 'organizer';
+    }
+    return true;
   };
 
   // Global Timer Ticker when status is running
@@ -245,7 +452,7 @@ export const RaceProvider: React.FC<{ children: React.ReactNode }> = ({ children
     return () => clearInterval(interval);
   }, [raceStatus]);
 
-  // Sync to LocalStorage
+  // Sync to LocalStorage for offline resilience
   useEffect(() => {
     safeSetItem(STORAGE_KEYS.EVENTS, JSON.stringify(events));
   }, [events]);
@@ -275,31 +482,13 @@ export const RaceProvider: React.FC<{ children: React.ReactNode }> = ({ children
     safeSetItem(STORAGE_KEYS.RACE_LOGS, JSON.stringify(raceLogs));
   }, [raceLogs]);
 
-  const [broadcasts, setBroadcasts] = useState<RaceBroadcast[]>(() => {
-    const saved = safeGetItem(STORAGE_KEYS.BROADCASTS);
-    return saved ? JSON.parse(saved) : DEFAULT_BROADCASTS;
-  });
-
   useEffect(() => {
     safeSetItem(STORAGE_KEYS.BROADCASTS, JSON.stringify(broadcasts));
   }, [broadcasts]);
 
-  const sendBroadcast = (title: string, message: string, type: 'urgent' | 'info' | 'weather' | 'clue') => {
-    const newBc: RaceBroadcast = {
-      id: `bc-${Date.now()}`,
-      time: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB',
-      title,
-      message,
-      type,
-      author: 'Direktur Perlombaan'
-    };
-    setBroadcasts((prev) => [newBc, ...prev]);
-    addLog(`Pengumuman Siaran: "${title}" (${type.toUpperCase()})`, 'system');
-  };
-
-  const deleteBroadcast = (id: string) => {
-    setBroadcasts((prev) => prev.filter((b) => b.id !== id));
-  };
+  useEffect(() => {
+    safeSetItem('racepoint_sos_alerts_v1', JSON.stringify(sosAlerts));
+  }, [sosAlerts]);
 
   useEffect(() => {
     if (activeTeamId) {
@@ -309,16 +498,17 @@ export const RaceProvider: React.FC<{ children: React.ReactNode }> = ({ children
     }
   }, [activeTeamId]);
 
-  // Helper to add log
+  // Helper to add log and persist to Firestore
   const addLog = (message: string, type: 'checkin' | 'judge' | 'system' | 'registration') => {
     const nowTime = new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB';
     const newLog: RaceLog = {
-      id: `log-${Date.now()}`,
+      id: `log-${Date.now()}-${Math.floor(100000 + Math.random() * 900000)}`,
       time: nowTime,
       message,
       type,
     };
-    setRaceLogs((prev) => [newLog, ...prev.slice(0, 19)]); // keep recent 20 logs
+    setRaceLogs((prev) => [newLog, ...prev.slice(0, 29)]);
+    firestoreService.addActivityLog(newLog, selectedEventId);
   };
 
   const startRace = () => {
@@ -342,7 +532,52 @@ export const RaceProvider: React.FC<{ children: React.ReactNode }> = ({ children
     addLog('Race Director: Timer balapan di-reset ke 00:00:00.', 'system');
   };
 
-  // Register a new team dynamically from Landing Page
+  const sendBroadcast = (title: string, message: string, type: 'urgent' | 'info' | 'weather' | 'clue') => {
+    const newBc: RaceBroadcast = {
+      id: `bc-${Date.now()}-${Math.floor(100000 + Math.random() * 900000)}`,
+      time: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB',
+      title,
+      message,
+      type,
+      author: 'Direktur Perlombaan'
+    };
+    setBroadcasts((prev) => [newBc, ...prev]);
+    firestoreService.addBroadcast(newBc, selectedEventId);
+    addLog(`Pengumuman Siaran: "${title}" (${type.toUpperCase()})`, 'system');
+  };
+
+  const deleteBroadcast = (id: string) => {
+    setBroadcasts((prev) => prev.filter((b) => b.id !== id));
+    firestoreService.deleteBroadcast(id);
+  };
+
+  const triggerSos = (teamId: string, coordinates: { lat: number; lng: number }) => {
+    const team = teams.find(t => t.id === teamId);
+    if (!team) return;
+    const now = Date.now();
+    const timeString = new Date(now).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit', second: '2-digit' }) + ' WIB';
+    
+    const newAlert: SosAlert = {
+      id: `sos-${Date.now()}`,
+      teamId: team.id,
+      teamName: team.name,
+      bibNumber: team.bibNumber,
+      timestamp: now,
+      timeString,
+      coordinates,
+      status: 'active'
+    };
+
+    setSosAlerts(prev => [newAlert, ...prev]);
+    firestoreService.sendSosAlert(newAlert, selectedEventId);
+  };
+
+  const resolveSos = (alertId: string) => {
+    setSosAlerts(prev => prev.map(a => a.id === alertId ? { ...a, status: 'resolved' } : a));
+    firestoreService.resolveSosAlert(alertId);
+  };
+
+  // Register Team
   const registerTeam = (teamData: {
     eventId: string;
     name: string;
@@ -391,6 +626,7 @@ export const RaceProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
     setTeams((prev) => [newTeam, ...prev]);
     setActiveTeamId(newId);
+    firestoreService.saveTeam(newTeam, teamData.eventId || selectedEventId);
     addLog(`Tim Baru Terdaftar: "${teamData.name}" (BIB ${bibNumber}) oleh ${teamData.leaderName}.`, 'registration');
 
     return { team: newTeam, bibNumber, pinCode };
@@ -416,6 +652,7 @@ export const RaceProvider: React.FC<{ children: React.ReactNode }> = ({ children
       })
     );
     if (updated) {
+      firestoreService.saveTeam(updated, selectedEventId);
       addLog(`Tim Diperbarui: "${updated.name}" (BIB ${updated.bibNumber}).`, 'system');
     }
     return updated;
@@ -427,39 +664,70 @@ export const RaceProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (activeTeamId === teamId) {
       setActiveTeamId(null);
     }
+    firestoreService.deleteTeam(teamId);
     addLog(`Tim Dihapus: "${target?.name || teamId}".`, 'system');
   };
 
-  // Participant Login via BIB & PIN
-  const loginParticipant = (bibNumber: string, pinCode: string) => {
+  // Participant Login via BIB & PIN (Server verified with cryptographic session token)
+  const loginParticipant = async (bibNumber: string, pinCode: string) => {
     const cleanBib = bibNumber.trim().toUpperCase();
     const cleanPin = pinCode.trim();
 
-    const matched = teams.find(
-      (t) => t.bibNumber.toUpperCase() === cleanBib && t.pinCode === cleanPin
-    );
+    try {
+      const res = await fetch('/api/participant/login', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ bibNumber: cleanBib, pinCode: cleanPin, teams }),
+      });
+      const data = await res.json();
+      if (data.success && data.team) {
+        setActiveTeamId(data.team.id);
+        safeSetItem(STORAGE_KEYS.ACTIVE_TEAM, data.team.id);
+        if (data.team.eventId && data.team.eventId !== selectedEventId) {
+          setSelectedEventId(data.team.eventId);
+        }
+        if (data.sessionToken) {
+          safeSetItem('racepoint_session_token_v1', data.sessionToken);
+        }
+        addLog(`Peserta Login: Tim "${data.team.name}" (BIB ${data.team.bibNumber}) berhasil terverifikasi masuk server.`, 'system');
+        const matched = teams.find((t) => t.id === data.team.id) || data.team;
+        return { success: true, team: matched, sessionToken: data.sessionToken };
+      }
+      return { success: false, message: data.message || 'Nomor BIB atau PIN tidak cocok.' };
+    } catch {
+      // Offline fallback: verify against cached teams if network is down
+      const matched = teams.find(
+        (t) => t.bibNumber.toUpperCase() === cleanBib && t.pinCode === cleanPin
+      );
 
-    if (matched) {
-      setActiveTeamId(matched.id);
-      addLog(`Peserta Login: Tim "${matched.name}" masuk ke sistem HP di lintasan.`, 'system');
-      return { success: true, team: matched };
+      if (matched) {
+        setActiveTeamId(matched.id);
+        safeSetItem(STORAGE_KEYS.ACTIVE_TEAM, matched.id);
+        if ((matched as any).eventId && (matched as any).eventId !== selectedEventId) {
+          setSelectedEventId((matched as any).eventId);
+        }
+        addLog(`Peserta Login (Offline): Tim "${matched.name}" masuk ke sistem HP di lintasan.`, 'system');
+        return { success: true, team: matched };
+      }
+
+      return { 
+        success: false, 
+        message: 'Nomor BIB atau PIN tidak cocok. Silakan periksa kembali atau hubungi panitia.' 
+      };
     }
-
-    return { 
-      success: false, 
-      message: 'Nomor BIB atau PIN tidak cocok. Silakan periksa kembali atau gunakan tombol Coba Tim Demo.' 
-    };
   };
 
   const logoutParticipant = () => {
     setActiveTeamId(null);
+    safeRemoveItem(STORAGE_KEYS.ACTIVE_TEAM);
+    safeRemoveItem('racepoint_session_token_v1');
   };
 
-  // Minimum Interval Tracking (Anti-Speedrun) Helper
+  // Anti-speedrun cooldown helper
   const getTeamRemainingCooldown = (teamId: string) => {
     const currentEvent = events.find((e) => e.id === selectedEventId) || events[0];
     const isEnforced = currentEvent?.enforceMinInterval !== false;
-    const minInterval = currentEvent?.minIntervalBetweenCheckpointsSeconds ?? currentEvent?.scoringRules?.minIntervalSeconds ?? 60;
+    const minInterval = currentEvent?.minIntervalBetweenCheckpointsSeconds ?? currentEvent?.scoringRules?.minIntervalSeconds ?? 30;
 
     if (!isEnforced || minInterval <= 0) {
       return { inCooldown: false, remainingSeconds: 0, minIntervalSeconds: 0 };
@@ -482,117 +750,38 @@ export const RaceProvider: React.FC<{ children: React.ReactNode }> = ({ children
 
   const clearTeamCooldown = (teamId: string) => {
     const team = teams.find((t) => t.id === teamId);
-    setTeams((prev) =>
-      prev.map((t) => {
-        if (t.id === teamId) {
-          return {
-            ...t,
-            lastCheckinTimestamp: undefined,
-          };
-        }
-        return t;
-      })
-    );
-    addLog(`Bypass Anti-Cheat: Panitia me-reset waktu jeda pos untuk Tim "${team?.name || teamId}".`, 'system');
+    if (team) {
+      updateTeam(teamId, { lastCheckinTimestamp: undefined });
+      addLog(`Bypass Anti-Cheat: Panitia me-reset waktu jeda pos untuk Tim "${team.name}".`, 'system');
+    }
   };
 
-  // Team Check-in to a Checkpoint
-  const checkInCheckpoint = (teamId: string, checkpointId: string, bypassCooldown = false) => {
+  // Check-in by Checkpoint ID (delegates to atomic Firestore transaction with GPS & anti-duplicate protection)
+  const checkInCheckpoint = async (
+    teamId: string, 
+    checkpointId: string, 
+    bypassCooldown = false,
+    gpsCoords?: { lat: number; lng: number; accuracy?: number }
+  ) => {
     const cp = checkpoints.find((c) => c.id === checkpointId);
-    const targetTeam = teams.find((t) => t.id === teamId);
     if (!cp) {
-      return { success: false, pointsAwarded: 0, checkpointName: '', message: 'Pos checkpoint tidak ditemukan.' };
-    }
-
-    // Auto-Lock Checkpoint Validation
-    const currentEvt = events.find((e) => e.id === selectedEventId) || events[0];
-    const isAutoLockEnabled = currentEvt?.autoLockCheckpointsEnabled !== false;
-    const effectiveLockMins = cp.autoLockMinutes && cp.autoLockMinutes > 0 
-      ? cp.autoLockMinutes 
-      : (currentEvt?.autoLockCheckpointsMinutes || 0);
-
-    const elapsedMins = Math.floor(raceElapsedSeconds / 60);
-
-    if (isAutoLockEnabled && effectiveLockMins > 0 && elapsedMins >= effectiveLockMins) {
-      addLog(
-        `🔒 Auto-Lock Checkpoint: Tim "${targetTeam?.name || 'Peserta'}" mencoba scan ${cp.name} yang telah tertutup otomatis setelah ${effectiveLockMins} menit lomba.`,
-        'system'
-      );
-      return {
-        success: false,
-        pointsAwarded: 0,
-        checkpointName: cp.name,
-        isLocked: true,
-        message: `🔒 Pos "${cp.name}" telah tertutup otomatis (Auto-Locked) karena batas waktu ${effectiveLockMins} menit dari awal lomba telah terlampaui.`
+      return { 
+        success: false, 
+        pointsAwarded: 0, 
+        checkpointName: '', 
+        message: 'Pos checkpoint tidak ditemukan.' 
       };
     }
-
-    // Anti-Speedrun check
-    if (!bypassCooldown) {
-      const cooldown = getTeamRemainingCooldown(teamId);
-      if (cooldown.inCooldown) {
-        addLog(
-          `Peringatan Jeda: Tim "${targetTeam?.name || 'Peserta'}" terdeteksi scan ${cp.name} terlalu cepat (sisa jeda: ${cooldown.remainingSeconds}s). Sistem anti-speedrun memblokir check-in.`,
-          'system'
-        );
-        return {
-          success: false,
-          pointsAwarded: 0,
-          checkpointName: cp.name,
-          isCooldown: true,
-          remainingSeconds: cooldown.remainingSeconds,
-          message: `Jeda minimum belum terpenuhi! Harap tunggu ${cooldown.remainingSeconds} detik lagi sebelum check-in pos berikutnya (Pencegahan speedrun).`
-        };
-      }
-    }
-
-    const now = Date.now();
-    const timeString = new Date(now).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB';
-    setTeams((prev) => 
-      prev.map((t) => {
-        if (t.id === teamId) {
-          const nextCompleted = Math.min(t.totalCheckpoints, t.checkpointsCompleted + 1);
-          const newPoints = t.points + cp.points;
-          const newTotal = newPoints + t.bonusPoints - t.penaltyPoints;
-          const newVisit = {
-            checkpointId: cp.id,
-            checkpointName: cp.name,
-            timestamp: now,
-            timeString,
-            points: cp.points,
-            status: 'completed' as const,
-            method: 'QR Scan' as const,
-          };
-          const existingHistory = t.visitHistory || [];
-          const updatedHistory = [...existingHistory.filter(v => v.checkpointId !== cp.id), newVisit];
-
-          return {
-            ...t,
-            points: newPoints,
-            totalScore: newTotal,
-            checkpointsCompleted: nextCompleted,
-            lastPosName: cp.name,
-            lastUpdated: 'Baru saja',
-            lastCheckinTimestamp: now,
-            visitHistory: updatedHistory,
-          };
-        }
-        return t;
-      })
-    );
-
-    addLog(`Check-in: Tim "${targetTeam?.name || 'Peserta'}" berhasil scan ${cp.name} (+${cp.points} Pts). Waktu jeda pos berikutnya diaktifkan.`, 'checkin');
-
-    return { 
-      success: true, 
-      pointsAwarded: cp.points, 
-      checkpointName: cp.name,
-      message: `Berhasil check-in di ${cp.name}! +${cp.points} Poin berhasil ditambahkan.`
-    };
+    return await checkInByQrCode(teamId, cp.qrCodeValue, bypassCooldown, gpsCoords);
   };
 
-  // Check-in by typed / scanned barcode text
-  const checkInByQrCode = (teamId: string, qrCodeInput: string, bypassCooldown = false) => {
+  // Check-in by typed / scanned barcode text with Realtime Firestore Atomic Transaction
+  const checkInByQrCode = async (
+    teamId: string, 
+    qrCodeInput: string, 
+    bypassCooldown = false,
+    gpsCoords?: { lat: number; lng: number; accuracy?: number }
+  ) => {
     const cleanInput = qrCodeInput.trim().toUpperCase();
     if (!cleanInput) {
       return { 
@@ -603,25 +792,30 @@ export const RaceProvider: React.FC<{ children: React.ReactNode }> = ({ children
       };
     }
 
-    const matchedCp = checkpoints.find((c) => {
-      const targetVal = c.qrCodeValue.toUpperCase();
-      return (
-        targetVal === cleanInput || 
-        targetVal.replace(/-/g, '') === cleanInput.replace(/-/g, '') ||
-        targetVal.endsWith(cleanInput)
-      );
+    const currentEvt = events.find((e) => e.id === selectedEventId) || events[0];
+    const sessionToken = safeGetItem('racepoint_session_token_v1') || undefined;
+
+    // Process through Firestore Service with transaction and duplicate check
+    const scanRes = await firestoreService.processCheckInScan({
+      teamId,
+      qrCodeInput: cleanInput,
+      checkpoints,
+      event: currentEvt,
+      gpsCoordinates: gpsCoords,
+      bypassCooldown,
+      sessionToken,
     });
 
-    if (!matchedCp) {
-      return { 
-        success: false, 
-        pointsAwarded: 0, 
-        checkpointName: '', 
-        message: `Kode barcode "${qrCodeInput}" tidak valid atau tidak cocok dengan rute pos lomba ini.` 
-      };
-    }
-
-    return checkInCheckpoint(teamId, matchedCp.id, bypassCooldown);
+    return {
+      success: scanRes.success,
+      pointsAwarded: scanRes.pointsAwarded,
+      checkpointName: scanRes.checkpointName,
+      message: scanRes.message,
+      code: scanRes.code,
+      isDuplicate: scanRes.isDuplicate,
+      isCooldown: scanRes.isCooldown,
+      remainingSeconds: scanRes.remainingSeconds,
+    };
   };
 
   // Submit proof from Participant
@@ -656,7 +850,7 @@ export const RaceProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     setSubmissions((prev) => [newSub, ...prev]);
-    addLog(`Misi Terkirim: Tim "${team?.name}" mengunggah bukti tugas untuk ${cp?.name}.`, 'judge');
+    firestoreService.submitChallenge(newSub, selectedEventId);
   };
 
   // Judge review submission
@@ -666,40 +860,10 @@ export const RaceProvider: React.FC<{ children: React.ReactNode }> = ({ children
     score: number,
     note: string
   ) => {
-    const sub = submissions.find((s) => s.id === submissionId);
-    if (!sub) return;
-
-    setSubmissions((prev) => 
-      prev.map((s) => s.id === submissionId ? {
-        ...s,
-        status,
-        scoreGiven: score,
-        judgeNote: note,
-      } : s)
-    );
-
-    if (status === 'approved' && score > 0) {
-      setTeams((prev) => 
-        prev.map((t) => {
-          if (t.id === sub.teamId) {
-            const newBonus = t.bonusPoints + score;
-            return {
-              ...t,
-              bonusPoints: newBonus,
-              totalScore: t.points + newBonus - t.penaltyPoints,
-              lastUpdated: 'Dinilai oleh Juri',
-            };
-          }
-          return t;
-        })
-      );
-      addLog(`Penilaian Juri: Tim "${sub.teamName}" disetujui untuk ${sub.checkpointName} (+${score} Poin).`, 'judge');
-    } else {
-      addLog(`Penilaian Juri: Tugas tim "${sub.teamName}" di ${sub.checkpointName} ditolak.`, 'judge');
-    }
+    firestoreService.reviewChallengeSubmission(submissionId, status, score, note);
   };
 
-  // Manual score input & penalty submission by judge with team & checkpoint validation
+  // Manual score input & penalty submission by judge
   const submitJudgeManualScore = (
     teamIdOrBib: string,
     checkpointIdOrCode: string,
@@ -714,20 +878,13 @@ export const RaceProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const cleanCodeInput = (checkpointIdOrCode || '').trim().toUpperCase();
 
     if (!cleanTeamInput) {
-      return {
-        success: false,
-        message: 'Harap masukkan ID Tim atau nomor BIB terlebih dahulu!',
-      };
+      return { success: false, message: 'Harap masukkan ID Tim atau nomor BIB terlebih dahulu!' };
     }
 
     if (!cleanCodeInput) {
-      return {
-        success: false,
-        message: 'Harap masukkan Kode Pos atau ID Checkpoint terlebih dahulu!',
-      };
+      return { success: false, message: 'Harap masukkan Kode Pos atau ID Checkpoint terlebih dahulu!' };
     }
 
-    // Find team by ID or bibNumber or name
     const targetTeam = teams.find((t) => 
       t.id.toLowerCase() === cleanTeamInput ||
       t.bibNumber.toLowerCase() === cleanTeamInput ||
@@ -737,38 +894,32 @@ export const RaceProvider: React.FC<{ children: React.ReactNode }> = ({ children
     if (!targetTeam) {
       return {
         success: false,
-        message: `ID Tim atau nomor BIB "${teamIdOrBib}" tidak ditemukan dalam daftar tim peserta lomba!`,
+        message: `ID Tim atau nomor BIB "${teamIdOrBib}" tidak ditemukan dalam daftar tim peserta!`,
       };
     }
 
-    // Find checkpoint by ID or qrCodeValue or name or code
     const targetCp = checkpoints.find((c) => {
       const cpId = c.id.toUpperCase();
       const qrVal = c.qrCodeValue.toUpperCase();
       const cpName = c.name.toUpperCase();
-      const cpCode = (c as any).code ? String((c as any).code).toUpperCase() : '';
       return (
         cpId === cleanCodeInput ||
         qrVal === cleanCodeInput ||
         qrVal.replace(/-/g, '') === cleanCodeInput.replace(/-/g, '') ||
-        cpName === cleanCodeInput ||
-        (cpCode && cpCode === cleanCodeInput)
+        cpName === cleanCodeInput
       );
     });
 
     if (!targetCp) {
       return {
         success: false,
-        message: `Kode Pos atau ID Checkpoint "${checkpointIdOrCode}" tidak valid atau tidak terdaftar pada rute event ini!`,
+        message: `Kode Pos atau ID Checkpoint "${checkpointIdOrCode}" tidak valid!`,
       };
     }
 
     const numericScore = Number(score);
     if (isNaN(numericScore)) {
-      return {
-        success: false,
-        message: 'Nilai skor juri harus berupa angka valid!',
-      };
+      return { success: false, message: 'Nilai skor juri harus berupa angka valid!' };
     }
 
     const isPenaltyAction = isPenalty || numericScore < 0 || penaltyMinutesToAdd > 0;
@@ -776,96 +927,33 @@ export const RaceProvider: React.FC<{ children: React.ReactNode }> = ({ children
     const bonusPointsEarned = !isPenaltyAction ? Math.max(0, numericScore) : 0;
     const addedTime = Math.max(0, Number(penaltyMinutesToAdd) || 0);
 
-    // Record an approved submission or penalty entry so it is logged in history
-    const manualSub: ChallengeSubmission = {
-      id: `manual-sub-${Date.now()}`,
+    // Call Firestore service
+    firestoreService.submitJudgeManualScore({
       teamId: targetTeam.id,
-      teamName: targetTeam.name,
       checkpointId: targetCp.id,
+      score: isPenaltyAction ? penaltyPointsDeducted : bonusPointsEarned,
+      note,
+      markCheckpointCompleted,
+      photoUrl,
+      isPenalty: isPenaltyAction,
+      penaltyMinutesToAdd: addedTime,
+      eventId: selectedEventId,
+    });
+
+    return {
+      success: true,
+      message: isPenaltyAction 
+        ? `Penalti tersimpan! Tim ${targetTeam.name} dikenakan -${penaltyPointsDeducted} Poin di ${targetCp.name}.`
+        : `Skor manual tersimpan! +${bonusPointsEarned} poin untuk ${targetTeam.name} di ${targetCp.name}.`,
+      teamName: targetTeam.name,
       checkpointName: targetCp.name,
-      submittedAt: new Date().toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }) + ' WIB',
-      type: isPenaltyAction ? 'penalty' : 'photo',
-      contentText: isPenaltyAction
-        ? `🚨 Penalti Juri: -${penaltyPointsDeducted} Pts / +${addedTime}m Waktu (${note || 'Pelanggaran Aturan Pos'})`
-        : `Input Skor Manual Juri: ${note || 'Evaluasi Pos Lapangan'}`,
-      contentUrl: photoUrl || undefined,
-      status: 'approved',
-      scoreGiven: isPenaltyAction ? -penaltyPointsDeducted : bonusPointsEarned,
+      scoreAwarded: bonusPointsEarned,
+      penaltyDeducted: penaltyPointsDeducted,
       penaltyMinutesAdded: addedTime,
-      judgeNote: note || (isPenaltyAction ? 'Penalti diterbitkan oleh Juri Pos.' : 'Skor disahkan oleh Juri Pos.'),
     };
-
-    setSubmissions((prev) => [manualSub, ...prev]);
-
-    // Update team score & checkpoints completed & penalty minutes
-    setTeams((prev) =>
-      prev.map((t) => {
-        if (t.id === targetTeam.id) {
-          const newBonus = t.bonusPoints + bonusPointsEarned;
-          const newPenaltyPoints = t.penaltyPoints + penaltyPointsDeducted;
-          const newPenaltyMinutes = (t.penaltyMinutes || 0) + addedTime;
-          const newDurationMinutes = Math.max(0, t.durationMinutes + addedTime);
-          const newTotal = t.points + newBonus - newPenaltyPoints;
-
-          let newCompleted = t.checkpointsCompleted;
-          let newLastPos = t.lastPosName;
-
-          if (markCheckpointCompleted) {
-            if (newCompleted < t.totalCheckpoints) {
-              newCompleted += 1;
-            }
-            newLastPos = targetCp.name;
-          }
-
-          return {
-            ...t,
-            bonusPoints: newBonus,
-            penaltyPoints: newPenaltyPoints,
-            penaltyMinutes: newPenaltyMinutes,
-            durationMinutes: newDurationMinutes,
-            totalScore: newTotal,
-            checkpointsCompleted: newCompleted,
-            lastPosName: newLastPos,
-            lastUpdated: isPenaltyAction 
-              ? `Penalti Juri (-${penaltyPointsDeducted} Pts, +${addedTime}m)` 
-              : `Skor Manual (+${bonusPointsEarned} Pts)`,
-          };
-        }
-        return t;
-      })
-    );
-
-    if (isPenaltyAction) {
-      addLog(
-        `🚨 PENALTI JURI: Tim "${targetTeam.name}" (BIB ${targetTeam.bibNumber}) dikenakan sanksi di ${targetCp.name}: -${penaltyPointsDeducted} Poin${addedTime > 0 ? `, +${addedTime} Menit Penalti Waktu` : ''} (${note || 'Pelanggaran Aturan Pos'}).`,
-        'judge'
-      );
-
-      return {
-        success: true,
-        message: `Penalti berhasil diterbitkan! Tim ${targetTeam.name} dikenakan -${penaltyPointsDeducted} Poin${addedTime > 0 ? ` & +${addedTime} Menit Waktu` : ''} di ${targetCp.name}.`,
-        teamName: targetTeam.name,
-        checkpointName: targetCp.name,
-        penaltyDeducted: penaltyPointsDeducted,
-        penaltyMinutesAdded: addedTime,
-      };
-    } else {
-      addLog(
-        `Input Skor Manual Juri: Tim "${targetTeam.name}" (BIB ${targetTeam.bibNumber}) di ${targetCp.name} diberi +${bonusPointsEarned} poin (${note || 'Penilaian Juri'}).`,
-        'judge'
-      );
-
-      return {
-        success: true,
-        message: `Skor manual berhasil dicatat! +${bonusPointsEarned} poin diberikan ke Tim ${targetTeam.name} di ${targetCp.name}.`,
-        teamName: targetTeam.name,
-        checkpointName: targetCp.name,
-        scoreAwarded: bonusPointsEarned,
-      };
-    }
   };
 
-  // Create Event from Organizer
+  // Create Event
   const createEvent = (eventData: Partial<EventItem>) => {
     const newEvent: EventItem = {
       id: `evt-${Date.now()}`,
@@ -898,11 +986,12 @@ export const RaceProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     setEvents((prev) => [newEvent, ...prev]);
+    firestoreService.saveEvent(newEvent);
     addLog(`Event Baru Dibuat: "${newEvent.title}" di ${newEvent.location}.`, 'system');
     return newEvent;
   };
 
-  // Update Event from Organizer
+  // Update Event
   const updateEvent = (eventId: string, updatedData: Partial<EventItem>) => {
     let updated: EventItem | undefined;
     setEvents((prev) =>
@@ -915,12 +1004,13 @@ export const RaceProvider: React.FC<{ children: React.ReactNode }> = ({ children
       })
     );
     if (updated) {
-      addLog(`Event Diperbarui: "${updated.title}" (${updated.location}).`, 'system');
+      firestoreService.saveEvent(updated);
+      addLog(`Event Diperbarui: "${updated.title}".`, 'system');
     }
     return updated;
   };
 
-  // Delete Event from Organizer
+  // Delete Event
   const deleteEvent = (eventId: string) => {
     const target = events.find((e) => e.id === eventId);
     setEvents((prev) => prev.filter((e) => e.id !== eventId));
@@ -930,13 +1020,16 @@ export const RaceProvider: React.FC<{ children: React.ReactNode }> = ({ children
         setSelectedEventId(remaining[0].id);
       }
     }
+    firestoreService.deleteEvent(eventId);
     addLog(`Event Dihapus: "${target?.title || eventId}".`, 'system');
   };
 
-  // Create Checkpoint from Organizer
+  // Create Checkpoint
   const createCheckpoint = (checkpointData: Partial<Checkpoint>) => {
     const nextNumber = checkpoints.length + 1;
-    const uniqueId = checkpointData.id || `cp-${Date.now()}-${Math.floor(100000 + Math.random() * 900000)}`;
+    const randomHash = Math.random().toString(36).substring(2, 8);
+    const uniqueId = checkpointData.id || `cp-${Date.now()}-${randomHash}`;
+    
     const newCp: Checkpoint = {
       id: uniqueId,
       number: nextNumber,
@@ -953,18 +1046,12 @@ export const RaceProvider: React.FC<{ children: React.ReactNode }> = ({ children
     };
 
     setCheckpoints((prev) => [...prev, newCp]);
-    // Sync totalCheckpoints in events
-    setEvents((prev) =>
-      prev.map((evt) => ({
-        ...evt,
-        totalCheckpoints: checkpoints.length + 1,
-      }))
-    );
-    addLog(`Pos Ditambahkan: "${newCp.name}"${newCp.locationName ? ` (${newCp.locationName})` : ''} dengan nilai ${newCp.points} Poin.`, 'system');
+    firestoreService.saveCheckpoint(newCp, selectedEventId);
+    addLog(`Pos Ditambahkan: "${newCp.name}" dengan nilai ${newCp.points} Poin.`, 'system');
     return newCp;
   };
 
-  // Update Checkpoint from Organizer
+  // Update Checkpoint
   const updateCheckpoint = (checkpointId: string, updatedData: Partial<Checkpoint>) => {
     let updated: Checkpoint | undefined;
     setCheckpoints((prev) =>
@@ -981,12 +1068,13 @@ export const RaceProvider: React.FC<{ children: React.ReactNode }> = ({ children
       })
     );
     if (updated) {
-      addLog(`Pos Diperbarui: "${updated.name}" - Nilai Pos: ${updated.points} Poin.`, 'system');
+      firestoreService.saveCheckpoint(updated, selectedEventId);
+      addLog(`Pos Diperbarui: "${updated.name}" (${updated.points} Poin).`, 'system');
     }
     return updated;
   };
 
-  // Delete Checkpoint from Organizer
+  // Delete Checkpoint
   const deleteCheckpoint = (checkpointId: string) => {
     const target = checkpoints.find((c) => c.id === checkpointId);
     setCheckpoints((prev) => {
@@ -996,33 +1084,59 @@ export const RaceProvider: React.FC<{ children: React.ReactNode }> = ({ children
         number: idx + 1,
       }));
     });
-    setEvents((prev) =>
-      prev.map((evt) => ({
-        ...evt,
-        totalCheckpoints: Math.max(0, checkpoints.length - 1),
-      }))
-    );
-    addLog(`Pos Dihapus: "${target?.name || checkpointId}". Sisa ${Math.max(0, checkpoints.length - 1)} pos kontrol.`, 'system');
+    firestoreService.deleteCheckpoint(checkpointId);
+    addLog(`Pos Dihapus: "${target?.name || checkpointId}".`, 'system');
   };
 
   // Batch update all checkpoint points
   const batchUpdateCheckpointPoints = (points: number) => {
     const numericPoints = Number(points);
-    setCheckpoints((prev) => prev.map((cp) => ({ ...cp, points: numericPoints })));
+    setCheckpoints((prev) => prev.map((cp) => {
+      const updated = { ...cp, points: numericPoints };
+      firestoreService.saveCheckpoint(updated, selectedEventId);
+      return updated;
+    }));
     addLog(`Nilai Seluruh Pos Diperbarui: Menjadi ${numericPoints} Poin per pos.`, 'system');
   };
 
+  // Refresh state directly from LocalStorage
+  const refreshDataFromStorage = () => {
+    try {
+      const savedEvents = safeGetItem(STORAGE_KEYS.EVENTS);
+      if (savedEvents) setEvents(JSON.parse(savedEvents));
+
+      const savedCheckpoints = safeGetItem(STORAGE_KEYS.CHECKPOINTS);
+      if (savedCheckpoints) setCheckpoints(JSON.parse(savedCheckpoints));
+
+      const savedTeams = safeGetItem(STORAGE_KEYS.TEAMS);
+      if (savedTeams) setTeams(JSON.parse(savedTeams));
+
+      const savedSubmissions = safeGetItem(STORAGE_KEYS.SUBMISSIONS);
+      if (savedSubmissions) setSubmissions(JSON.parse(savedSubmissions));
+    } catch (e) {
+      console.warn('Failed to refresh race data from storage:', e);
+    }
+  };
+
+  // Cross-tab fallback
+  useEffect(() => {
+    const handleStorageChange = (e: StorageEvent) => {
+      if (
+        e.key === STORAGE_KEYS.TEAMS ||
+        e.key === STORAGE_KEYS.CHECKPOINTS ||
+        e.key === STORAGE_KEYS.SUBMISSIONS ||
+        e.key === STORAGE_KEYS.EVENTS
+      ) {
+        refreshDataFromStorage();
+      }
+    };
+
+    window.addEventListener('storage', handleStorageChange);
+    return () => window.removeEventListener('storage', handleStorageChange);
+  }, []);
+
   // Reset to initial demo data
   const resetToDemoData = () => {
-    localStorage.removeItem(STORAGE_KEYS.EVENTS);
-    localStorage.removeItem(STORAGE_KEYS.CHECKPOINTS);
-    localStorage.removeItem(STORAGE_KEYS.TEAMS);
-    localStorage.removeItem(STORAGE_KEYS.SUBMISSIONS);
-    localStorage.removeItem(STORAGE_KEYS.ACTIVE_TEAM);
-    localStorage.removeItem(STORAGE_KEYS.RACE_STATUS);
-    localStorage.removeItem(STORAGE_KEYS.RACE_SECONDS);
-    localStorage.removeItem(STORAGE_KEYS.RACE_LOGS);
-    localStorage.removeItem(STORAGE_KEYS.BROADCASTS);
     setEvents(DEMO_EVENTS);
     setCheckpoints(DEMO_CHECKPOINTS);
     setTeams(DEMO_TEAMS);
@@ -1032,11 +1146,23 @@ export const RaceProvider: React.FC<{ children: React.ReactNode }> = ({ children
     setRaceElapsedSeconds(6120);
     setRaceLogs(DEFAULT_LOGS);
     setBroadcasts(DEFAULT_BROADCASTS);
+    firestoreService.seedInitialDataIfEmpty();
   };
 
   return (
     <RaceContext.Provider
       value={{
+        syncStatus,
+        firebaseUser,
+        signInWithGoogle,
+        signOutFirebase,
+        currentUserRole,
+        adminPassword,
+        judgePassword,
+        loginAsRole,
+        logoutRole,
+        updateRolePasswords,
+        hasAccess,
         events,
         checkpoints,
         teams,
@@ -1078,6 +1204,7 @@ export const RaceProvider: React.FC<{ children: React.ReactNode }> = ({ children
         deleteCheckpoint,
         batchUpdateCheckpointPoints,
         resetToDemoData,
+        refreshDataFromStorage,
       }}
     >
       {children}
