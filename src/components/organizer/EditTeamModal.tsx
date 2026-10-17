@@ -30,7 +30,7 @@ export const EditTeamModal: React.FC<EditTeamModalProps> = ({
       setName(team.name);
       setCategory(team.category);
       setBibNumber(team.bibNumber);
-      setPinCode(team.pinCode);
+      setPinCode((team as any).pinCode || '');
       setColor(team.color);
       setStatus(team.status);
       setBonusPoints(team.bonusPoints || 0);
@@ -78,7 +78,7 @@ export const EditTeamModal: React.FC<EditTeamModalProps> = ({
       bonusPoints: Number(bonusPoints) || 0,
       penaltyPoints: Number(penaltyPoints) || 0,
       members,
-    });
+    } as any);
     onClose();
   };
 

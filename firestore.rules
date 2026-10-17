@@ -42,12 +42,12 @@ service cloud.firestore {
     }
 
     function isValidTeam(data) {
-      return data.keys().hasAll(['id', 'eventId', 'name', 'bibNumber', 'pinCode', 'points', 'totalScore', 'status']) &&
+      return data.keys().hasAll(['id', 'eventId', 'name', 'bibNumber', 'points', 'totalScore', 'status']) &&
         data.id is string && data.id.size() <= 128 &&
         data.eventId is string && data.eventId.size() <= 128 &&
         data.name is string && data.name.size() <= 100 &&
         data.bibNumber is string && data.bibNumber.size() <= 20 &&
-        data.pinCode is string && data.pinCode.size() <= 10 &&
+        (!('pinCode' in data) || (data.pinCode is string && data.pinCode.size() <= 10)) &&
         data.points is number &&
         data.totalScore is number &&
         data.status in ['ready', 'racing', 'finished', 'dnf'];
@@ -159,7 +159,7 @@ service cloud.firestore {
           request.resource.data.bonusPoints == resource.data.bonusPoints &&
           request.resource.data.penaltyPoints == resource.data.penaltyPoints &&
           request.resource.data.bibNumber == resource.data.bibNumber &&
-          request.resource.data.pinCode == resource.data.pinCode
+          (!('pinCode' in request.resource.data) || !('pinCode' in resource.data) || request.resource.data.pinCode == resource.data.pinCode)
         )
       );
       allow delete: if isAdmin() && isValidId(teamId);
@@ -214,6 +214,11 @@ service cloud.firestore {
       allow get, list: if true;
       allow create, update: if isValidId(alertId) && isValidSos(request.resource.data);
       allow delete: if isAdmin() && isValidId(alertId);
+    }
+
+    // Team Private Credentials Collection - strictly denied for public client read/write (P0-A)
+    match /teamCredentials/{credentialId} {
+      allow read, write: if false;
     }
   }
 }

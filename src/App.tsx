@@ -11,6 +11,7 @@ import { EventDetailView } from './components/organizer/EventDetailView';
 import { ParticipantView } from './components/participant/ParticipantView';
 import { JudgeDashboardView } from './components/judge/JudgeDashboardView';
 import { LeaderboardView } from './components/leaderboard/LeaderboardView';
+import { SuperAdminDashboard } from './components/admin/SuperAdminDashboard';
 import { OrganizerMenu } from './types';
 import { Compass, ShieldCheck, Smartphone, UserCheck, Trophy, Lock, Shield, Key } from 'lucide-react';
 import { RaceProvider, useRace, UserRole } from './context/RaceContext';
@@ -212,6 +213,13 @@ function AppContent() {
           <LeaderboardView onShowToast={showToast} />
         )}
 
+        {/* VIEW 8: DASHBOARD SUPER ADMIN SAAS */}
+        {currentView === 'super-admin' && (
+          <div className="max-w-7xl mx-auto p-4 sm:p-6 lg:p-8">
+            <SuperAdminDashboard onShowToast={showToast} />
+          </div>
+        )}
+
         {/* VIEW 8: HALAMAN LOGON STAF & JURI (DEDICATED STAFF PORTAL) */}
         {currentView === 'login' && (
           <AdminJudgeLoginView
@@ -288,6 +296,12 @@ function AppContent() {
               className="text-slate-300 hover:text-white cursor-pointer"
             >
               Leaderboard
+            </button>
+            <button 
+              onClick={() => setCurrentView('super-admin')} 
+              className="text-orange-400 hover:text-orange-300 font-bold cursor-pointer"
+            >
+              Super Admin
             </button>
           </div>
 

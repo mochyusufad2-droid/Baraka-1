@@ -42,11 +42,12 @@ export interface CheckpointVisit {
 
 export interface Team {
   id: string;
+  eventId?: string;
+  clientId?: string;
   name: string;
   category: string;
   color: string;
   bibNumber: string;
-  pinCode: string;
   members: TeamMember[];
   checkpointsCompleted: number;
   totalCheckpoints: number;
@@ -66,10 +67,26 @@ export interface Team {
   currentCoordinates?: { lat: number; lng: number };
 }
 
+/**
+ * Separate schema for private credentials stored in 'teamCredentials' collection.
+ * Accessible ONLY by backend/Firebase Admin SDK.
+ */
+export interface TeamCredentials {
+  teamId: string;
+  bibNumber: string;
+  pinCode?: string;
+  hashedPin?: string;
+  salt?: string;
+  updatedAt?: string;
+}
+
+export type TeamCredential = TeamCredentials;
+
 import { GPXRouteData } from '../utils/gpxParser';
 
 export interface EventItem {
   id: string;
+  clientId?: string;
   title: string;
   subtitle: string;
   eventType: 'orienteering' | 'amazing_race' | 'outbound' | 'school' | 'indoor_qr';
@@ -173,5 +190,62 @@ export interface SosAlert {
   coordinates: { lat: number; lng: number };
   status: 'active' | 'resolved';
 }
+
+// Multi-Tenant SaaS & Auth Interfaces for Stage 2 Foundation
+
+export type UserRole = 'SUPER_ADMIN' | 'ADMIN_CLIENT' | 'JUDGE_FACILITATOR' | 'PARTICIPANT';
+
+export type ClientStatus = 'active' | 'suspended' | 'expired';
+
+export interface ClientAccount {
+  id: string; // clientId
+  name: string;
+  email: string;
+  phone?: string;
+  status: ClientStatus;
+  startDate: string; // ISO 8601 UTC
+  expiresAt: string; // ISO 8601 UTC
+  createdAt: string;
+  updatedAt: string;
+  notes?: string;
+}
+
+export interface AdminUser {
+  uid: string;
+  email: string;
+  displayName: string;
+  role: UserRole;
+  clientId?: string; // Mandatory for ADMIN_CLIENT
+  assignedEventIds?: string[]; // Optional for JUDGE_FACILITATOR
+  status: 'active' | 'inactive';
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SubscriptionHistoryItem {
+  id: string;
+  clientId: string;
+  extendedByUid: string;
+  extendedByEmail?: string;
+  previousExpiresAt: string | null;
+  newExpiresAt: string;
+  extensionDays: number;
+  paymentAmount?: number | null;
+  paymentRef?: string | null;
+  paymentDate?: string;
+  notes?: string;
+  timestamp: string;
+}
+
+export interface AuditLogItem {
+  id: string;
+  actorUid: string;
+  actorRole: UserRole;
+  action: string;
+  targetId?: string;
+  details?: Record<string, any>;
+  timestamp: string;
+}
+
 
 

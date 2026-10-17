@@ -129,15 +129,29 @@ class FirestoreService {
           );
         }
 
-        // Seed teams
+        // Seed teams (Save public team info in 'teams' and private credentials in 'teamCredentials')
         for (const t of DEMO_TEAMS) {
+          const publicTeam: Record<string, any> = { ...t, eventId: 'evt-01' };
+          const pinCode = publicTeam.pinCode;
+          delete publicTeam.pinCode;
+
           await setDoc(
             doc(db, 'teams', t.id),
-            sanitizeForFirestore({
-              ...t,
-              eventId: 'evt-01',
-            })
+            sanitizeForFirestore(publicTeam)
           );
+
+          if (pinCode) {
+            await setDoc(
+              doc(db, 'teamCredentials', t.id),
+              sanitizeForFirestore({
+                id: t.id,
+                eventId: 'evt-01',
+                bibNumber: t.bibNumber,
+                pinCode: pinCode,
+                createdAt: new Date().toISOString()
+              })
+            );
+          }
         }
 
         // Seed challenge submissions
@@ -399,10 +413,22 @@ class FirestoreService {
     const path = `teams/${team.id}`;
     try {
       this.updateSyncStatus('syncing');
-      await setDoc(doc(db, 'teams', team.id), sanitizeForFirestore({
-        ...team,
-        eventId,
-      }), { merge: true });
+      const publicTeamData: Record<string, any> = { ...team, eventId };
+      const privatePinCode = publicTeamData.pinCode;
+      delete publicTeamData.pinCode;
+
+      await setDoc(doc(db, 'teams', team.id), sanitizeForFirestore(publicTeamData), { merge: true });
+
+      if (privatePinCode) {
+        await setDoc(doc(db, 'teamCredentials', team.id), sanitizeForFirestore({
+          id: team.id,
+          eventId,
+          bibNumber: team.bibNumber,
+          pinCode: privatePinCode,
+          updatedAt: new Date().toISOString()
+        }), { merge: true });
+      }
+
       this.updateSyncStatus('synced');
     } catch (err) {
       this.updateSyncStatus('error');

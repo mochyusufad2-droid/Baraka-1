@@ -578,7 +578,7 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
                       <td className="p-3 font-semibold text-slate-900">{team.name}</td>
                       <td className="p-3 text-slate-600">{team.category}</td>
                       <td className="p-3 text-slate-600">{team.members[0]?.name || '-'}</td>
-                      <td className="p-3 font-mono font-bold text-orange-600">{team.pinCode}</td>
+                      <td className="p-3 font-mono font-bold text-orange-600">{(team as any).pinCode || '••••'}</td>
                       <td className="p-3 font-mono font-bold text-slate-900">{team.totalScore} Pts</td>
                       <td className="p-3">
                         <span className="px-2 py-0.5 rounded-full bg-emerald-100 text-emerald-800 font-semibold text-[10px]">
@@ -588,8 +588,9 @@ export const EventDetailView: React.FC<EventDetailViewProps> = ({
                       <td className="p-3">
                         <button
                           onClick={() => {
-                            navigator.clipboard.writeText(`BIB: ${team.bibNumber} | PIN: ${team.pinCode}`);
-                            onShowToast(`Akses login Tim ${team.name} (BIB: ${team.bibNumber}, PIN: ${team.pinCode}) disalin!`);
+                            const pin = (team as any).pinCode || '••••';
+                            navigator.clipboard.writeText(`BIB: ${team.bibNumber} | PIN: ${pin}`);
+                            onShowToast(`Akses login Tim ${team.name} (BIB: ${team.bibNumber}, PIN: ${pin}) disalin!`);
                           }}
                           className="text-orange-600 hover:underline font-semibold cursor-pointer flex items-center gap-1"
                         >

@@ -269,12 +269,13 @@ export const TeamsView: React.FC<TeamsViewProps> = ({
             <div className="pt-3 border-t border-slate-100 flex items-center justify-between gap-2">
               <div className="flex items-center gap-1.5">
                 <span className="text-[11px] font-mono text-slate-500">
-                  PIN: <strong className="text-slate-800">{team.pinCode}</strong>
+                  PIN: <strong className="text-slate-800">{(team as any).pinCode || '••••'}</strong>
                 </span>
                 <button
                   onClick={() => {
-                    navigator.clipboard.writeText(`BIB: ${team.bibNumber} | PIN: ${team.pinCode}`);
-                    onShowToast(`Akses login Tim ${team.name} (BIB: ${team.bibNumber}, PIN: ${team.pinCode}) disalin!`);
+                    const pin = (team as any).pinCode || '••••';
+                    navigator.clipboard.writeText(`BIB: ${team.bibNumber} | PIN: ${pin}`);
+                    onShowToast(`Akses login Tim ${team.name} (BIB: ${team.bibNumber}, PIN: ${pin}) disalin!`);
                   }}
                   title="Salin nomor BIB dan PIN"
                   className="p-1 text-slate-400 hover:text-orange-500 rounded transition-colors cursor-pointer"

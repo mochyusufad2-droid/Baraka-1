@@ -244,7 +244,6 @@ export const DEMO_TEAMS: Team[] = [
     category: 'Divisi Komersial',
     color: 'bg-red-600',
     bibNumber: 'A-01',
-    pinCode: '7721',
     members: [
       { name: 'Rian Pratama', role: 'Ketua Tim', phone: '0812-3456-7890' },
       { name: 'Siti Rahmawati', role: 'Navigators', phone: '0813-9876-5432' },
@@ -271,7 +270,6 @@ export const DEMO_TEAMS: Team[] = [
     category: 'Divisi Operasional & IT',
     color: 'bg-blue-600',
     bibNumber: 'B-04',
-    pinCode: '3349',
     members: [
       { name: 'Ahmad Fauzi', role: 'Ketua Tim', phone: '0857-1122-3344' },
       { name: 'Nadia Putri', role: 'Navigators', phone: '0856-7788-9900' },
@@ -298,7 +296,6 @@ export const DEMO_TEAMS: Team[] = [
     category: 'Divisi Keuangan & Risiko',
     color: 'bg-amber-600',
     bibNumber: 'C-07',
-    pinCode: '8812',
     members: [
       { name: 'Hendra Setiawan', role: 'Ketua Tim', phone: '0811-2233-4455' },
       { name: 'Maya Anggraini', role: 'Navigators' },
@@ -325,7 +322,6 @@ export const DEMO_TEAMS: Team[] = [
     category: 'Divisi Human Capital',
     color: 'bg-orange-600',
     bibNumber: 'D-12',
-    pinCode: '4410',
     members: [
       { name: 'Farhan Maulana', role: 'Ketua Tim' },
       { name: 'Rina Kusuma', role: 'Navigators' },
@@ -352,7 +348,6 @@ export const DEMO_TEAMS: Team[] = [
     category: 'Divisi Legal & Compliance',
     color: 'bg-purple-600',
     bibNumber: 'E-03',
-    pinCode: '9021',
     members: [
       { name: 'Bambang Tri', role: 'Ketua Tim' },
       { name: 'Kartika Sari', role: 'Navigators' },
@@ -378,7 +373,6 @@ export const DEMO_TEAMS: Team[] = [
     category: 'Divisi Audit Internal',
     color: 'bg-emerald-600',
     bibNumber: 'F-09',
-    pinCode: '1154',
     members: [
       { name: 'Dedi Kurniawan', role: 'Ketua Tim' },
       { name: 'Anisa Bella', role: 'Navigators' },

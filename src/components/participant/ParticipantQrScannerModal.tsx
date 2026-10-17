@@ -72,6 +72,43 @@ export const ParticipantQrScannerModal: React.FC<ParticipantQrScannerModalProps>
   // Cooldown Bypass toggle
   const [bypassCooldown, setBypassCooldown] = useState<boolean>(false);
 
+  // Hardware Diagnostic Tool State & Runner
+  const [diagnosticInfo, setDiagnosticInfo] = useState<{
+    hasMediaDevices: boolean;
+    hasGetUserMedia: boolean;
+    isSecureContext: boolean;
+    deviceCount: number;
+  } | null>(null);
+
+  const runHardwareDiagnostic = async () => {
+    console.info('[Hardware Diagnostic Tool] Starting navigator.mediaDevices diagnostic check...');
+    const hasMD = !!(navigator && navigator.mediaDevices);
+    const hasGUM = !!(hasMD && navigator.mediaDevices.getUserMedia);
+    const isSec = window.isSecureContext;
+    let count = 0;
+
+    if (hasMD && navigator.mediaDevices.enumerateDevices) {
+      try {
+        const devices = await navigator.mediaDevices.enumerateDevices();
+        const videoDevices = devices.filter(d => d.kind === 'videoinput');
+        count = videoDevices.length;
+        console.info('[Hardware Diagnostic Tool] Found video input devices:', count, videoDevices.map(d => ({ label: d.label || 'hidden', deviceId: d.deviceId })));
+      } catch (err: any) {
+        console.warn('[Hardware Diagnostic Tool] enumerateDevices error:', err?.name, err?.message);
+      }
+    }
+
+    const diag = {
+      hasMediaDevices: hasMD,
+      hasGetUserMedia: hasGUM,
+      isSecureContext: isSec,
+      deviceCount: count,
+    };
+    setDiagnosticInfo(diag);
+    console.info('[Hardware Diagnostic Tool] Diagnostic Summary:', diag);
+    return diag;
+  };
+
   // Reset states on open/close and optimize battery with visibilitychange
   useEffect(() => {
     const handleVisibilityChange = () => {
@@ -132,33 +169,75 @@ export const ParticipantQrScannerModal: React.FC<ParticipantQrScannerModalProps>
     }
   };
 
-  // Start Camera
+  // Start Camera with Fallbacks & Timeout
   const startCamera = async () => {
     stopCamera();
     setCameraPermission('pending');
     setErrorMessage(null);
 
+    await runHardwareDiagnostic();
+
+    console.info('[QR Scanner Debug] Initiating getUserMedia. UserAgent:', navigator.userAgent, 'FacingMode:', facingMode, 'Protocol:', window.location.protocol);
+
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      console.error('[QR Scanner Debug] navigator.mediaDevices.getUserMedia is unsupported.');
       setCameraPermission('unsupported');
       setErrorMessage('Kamera tidak didukung pada peramban/perangkat ini.');
       return;
     }
 
-    try {
-      const constraints: MediaStreamConstraints = {
-        video: {
-          facingMode: { ideal: facingMode },
-          width: { ideal: 1280 },
-          height: { ideal: 720 },
-        },
-      };
+    // Timeout safety in case getUserMedia hangs indefinitely waiting for permission
+    let hasTimedOut = false;
+    const timeoutId = setTimeout(() => {
+      if (cameraPermission === 'pending') {
+        hasTimedOut = true;
+        setCameraPermission('denied');
+        setErrorMessage('Waktu tunggu akses kamera habis atau izin diblokir browser. Silakan gunakan Input Manual.');
+        stopCamera();
+      }
+    }, 7000);
 
-      const stream = await navigator.mediaDevices.getUserMedia(constraints);
+    try {
+      let stream: MediaStream | null = null;
+
+      // Try 1: High res ideal constraints
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: {
+            facingMode: { ideal: facingMode },
+            width: { ideal: 1280 },
+            height: { ideal: 720 },
+          },
+        });
+      } catch (firstErr) {
+        console.warn('[QR Scanner] First constraints attempt failed, trying simpler constraints...', firstErr);
+        // Try 2: Simpler constraints fallback for older/restricted mobile browsers
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: facingMode },
+        });
+      }
+
+      if (hasTimedOut) {
+        if (stream) {
+          stream.getTracks().forEach(t => t.stop());
+        }
+        clearTimeout(timeoutId);
+        return;
+      }
+
+      clearTimeout(timeoutId);
+
+      if (!stream) {
+        throw new Error('Stream kamera kosong.');
+      }
+
       streamRef.current = stream;
 
       if (videoRef.current) {
         videoRef.current.srcObject = stream;
         videoRef.current.setAttribute('playsinline', 'true');
+        videoRef.current.setAttribute('autoplay', 'true');
+        videoRef.current.muted = true;
         await videoRef.current.play();
         setCameraPermission('granted');
 
@@ -166,16 +245,32 @@ export const ParticipantQrScannerModal: React.FC<ParticipantQrScannerModalProps>
         requestAnimationFrame(scanVideoFrame);
       }
     } catch (err: any) {
-      console.warn('[QR Scanner] Camera Access Error:', err);
-      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError') {
+      clearTimeout(timeoutId);
+      if (hasTimedOut) return;
+
+      console.error('[QR Scanner Debug] CRITICAL getUserMedia Error:', {
+        name: err?.name,
+        message: err?.message,
+        constraint: err?.constraint,
+        stack: err?.stack,
+        userAgent: navigator.userAgent,
+      });
+
+      if (err.name === 'NotAllowedError' || err.name === 'PermissionDeniedError' || err.name === 'SecurityError') {
         setCameraPermission('denied');
-        setErrorMessage('Izin kamera ditolak oleh peramban. Harap izinkan akses kamera di pengaturan browser HP.');
+        setErrorMessage(`Izin kamera ditolak/diblokir (${err.name}). Ketuk ikon gembok di bilah alamat browser, izinkan kamera, lalu muat ulang.`);
       } else if (err.name === 'NotFoundError' || err.name === 'DevicesNotFoundError') {
         setCameraPermission('unsupported');
-        setErrorMessage('Kamera fisik tidak ditemukan pada perangkat ini.');
+        setErrorMessage(`Kamera fisik tidak ditemukan (${err.name}). Pastikan perangkat memiliki kamera aktif.`);
+      } else if (err.name === 'NotReadableError' || err.name === 'TrackStartError') {
+        setCameraPermission('denied');
+        setErrorMessage(`Kamera sedang digunakan aplikasi lain (${err.name}). Tutup aplikasi lain yang mengakses kamera.`);
+      } else if (err.name === 'OverconstrainedError') {
+        setCameraPermission('denied');
+        setErrorMessage(`Kamera tidak mendukung spesifikasi resolusi yang diminta (${err.name}).`);
       } else {
         setCameraPermission('denied');
-        setErrorMessage(err.message || 'Gagal membuka aliran kamera HP.');
+        setErrorMessage(`Gagal membuka kamera [${err.name || 'Error'}]: ${err.message || 'Kesalahan tidak diketahui'}`);
       }
     }
   };
@@ -413,9 +508,18 @@ export const ParticipantQrScannerModal: React.FC<ParticipantQrScannerModalProps>
             )}
 
             {cameraPermission === 'pending' && (
-              <div className="p-8 text-center space-y-3">
+              <div className="p-8 text-center space-y-4">
                 <div className="w-10 h-10 border-4 border-orange-500 border-t-transparent rounded-full animate-spin mx-auto" />
-                <p className="text-xs font-bold text-slate-300">Menghubungkan Kamera HP...</p>
+                <div className="space-y-1">
+                  <p className="text-xs font-bold text-slate-300">Menghubungkan Kamera HP...</p>
+                  <p className="text-[10px] text-slate-400">Pastikan Anda mengizinkan akses kamera pada browser.</p>
+                </div>
+                <button
+                  onClick={() => setActiveTab('manual')}
+                  className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-white font-bold rounded-xl text-xs cursor-pointer shadow-md border border-slate-700"
+                >
+                  Beralih ke Input Manual Kode
+                </button>
               </div>
             )}
 
@@ -430,6 +534,15 @@ export const ParticipantQrScannerModal: React.FC<ParticipantQrScannerModalProps>
                     {errorMessage || 'Izin kamera ditolak oleh peramban HP.'}
                   </p>
                 </div>
+
+                {diagnosticInfo && (
+                  <div className="bg-slate-950/70 p-3 rounded-2xl border border-slate-800 text-left space-y-1 text-[11px] text-slate-400">
+                    <p className="font-bold text-slate-200">🔍 Laporan Diagnostik Perangkat:</p>
+                    <p>• Secure Context (HTTPS): <span className={diagnosticInfo.isSecureContext ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>{diagnosticInfo.isSecureContext ? 'Aman (Ya)' : 'Tidak Aman (HTTP)'}</span></p>
+                    <p>• MediaDevices API: <span className={diagnosticInfo.hasMediaDevices ? 'text-emerald-400 font-bold' : 'text-red-400 font-bold'}>{diagnosticInfo.hasMediaDevices ? 'Didukung' : 'Tidak Didukung'}</span></p>
+                    <p>• Kamera Terdeteksi: <span className={diagnosticInfo.deviceCount > 0 ? 'text-emerald-400 font-bold' : 'text-amber-400 font-bold'}>{diagnosticInfo.deviceCount > 0 ? `${diagnosticInfo.deviceCount} Kamera` : 'Tidak Ada / Izin Diblokir'}</span></p>
+                  </div>
+                )}
 
                 <div className="pt-2 flex flex-col gap-2">
                   <button

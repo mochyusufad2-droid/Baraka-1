@@ -4,7 +4,7 @@ import './index.css';
 import { initIndexedDB } from './utils/participantOfflineManager';
 
 // Register Service Worker for offline PWA caching
-if ('serviceWorker' in navigator && process.env.NODE_ENV !== 'development') {
+if ('serviceWorker' in navigator && import.meta.env.PROD) {
   window.addEventListener('load', () => {
     navigator.serviceWorker.register('/sw.js')
       .then((reg) => {

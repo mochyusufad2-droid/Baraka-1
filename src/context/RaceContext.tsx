@@ -608,7 +608,6 @@ export const RaceProvider: React.FC<{ children: React.ReactNode }> = ({ children
       category: teamData.category,
       color: assignedColor,
       bibNumber,
-      pinCode,
       members: memberList,
       checkpointsCompleted: 0,
       totalCheckpoints: checkpoints.length,
@@ -677,7 +676,7 @@ export const RaceProvider: React.FC<{ children: React.ReactNode }> = ({ children
       const res = await fetch('/api/participant/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ bibNumber: cleanBib, pinCode: cleanPin, teams }),
+        body: JSON.stringify({ bibNumber: cleanBib, pinCode: cleanPin }),
       });
       const data = await res.json();
       if (data.success && data.team) {
@@ -697,7 +696,7 @@ export const RaceProvider: React.FC<{ children: React.ReactNode }> = ({ children
     } catch {
       // Offline fallback: verify against cached teams if network is down
       const matched = teams.find(
-        (t) => t.bibNumber.toUpperCase() === cleanBib && t.pinCode === cleanPin
+        (t) => t.bibNumber.toUpperCase() === cleanBib && (t as any).pinCode === cleanPin
       );
 
       if (matched) {

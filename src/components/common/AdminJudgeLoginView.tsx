@@ -41,27 +41,67 @@ export const AdminJudgeLoginView: React.FC<AdminJudgeLoginViewProps> = ({
   } = useRace();
 
   const [activeTab, setActiveTab] = useState<'organizer' | 'judge'>(defaultRole);
+  const [emailInput, setEmailInput] = useState<string>('');
   const [passwordInput, setPasswordInput] = useState<string>('');
   const [showPassword, setShowPassword] = useState<boolean>(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(false);
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setErrorMsg(null);
     setIsLoading(true);
 
-    setTimeout(() => {
-      const res = loginAsRole(activeTab, passwordInput);
-      setIsLoading(false);
+    try {
+      if (activeTab === 'organizer' && emailInput.trim()) {
+        const response = await fetch('/api/admin/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email: emailInput.trim(), password: passwordInput }),
+        });
+        const data = await response.json();
+        setIsLoading(false);
 
+        if (response.ok && data.success) {
+          localStorage.setItem('admin_token', data.token);
+          loginAsRole(activeTab, passwordInput);
+          onShowToast(`Berhasil login sebagai staf ${data.user.email} (${data.user.role})!`);
+          onNavigateToView(activeTab);
+          return;
+        } else {
+          // Fallback to local demo password if api login fails
+          const res = loginAsRole(activeTab, passwordInput);
+          if (res.success) {
+            onShowToast(res.message);
+            onNavigateToView(activeTab);
+            return;
+          }
+          setErrorMsg(data.message || res.message || 'Gagal login. Periksa kembali email dan password yang diberikan Super Admin.');
+          return;
+        }
+      } else {
+        setTimeout(() => {
+          const res = loginAsRole(activeTab, passwordInput);
+          setIsLoading(false);
+
+          if (res.success) {
+            onShowToast(res.message);
+            onNavigateToView(activeTab);
+          } else {
+            setErrorMsg(res.message);
+          }
+        }, 300);
+      }
+    } catch (err: any) {
+      setIsLoading(false);
+      const res = loginAsRole(activeTab, passwordInput);
       if (res.success) {
         onShowToast(res.message);
         onNavigateToView(activeTab);
       } else {
-        setErrorMsg(res.message);
+        setErrorMsg(err?.message || 'Terjadi kesalahan saat otentikasi server.');
       }
-    }, 300);
+    }
   };
 
   const handleFillDemoPass = () => {
@@ -196,6 +236,23 @@ export const AdminJudgeLoginView: React.FC<AdminJudgeLoginViewProps> = ({
 
           {/* Form Logon Input */}
           <form onSubmit={handleSubmit} className="space-y-4">
+            {activeTab === 'organizer' && (
+              <div>
+                <label className="text-xs font-extrabold text-slate-700 flex items-center gap-1.5 mb-1.5">
+                  <UserCheck className="w-3.5 h-3.5 text-orange-600" />
+                  <span>Email Staf / Admin Client (dari Super Admin):</span>
+                </label>
+                <input
+                  type="email"
+                  value={emailInput}
+                  onChange={(e) => setEmailInput(e.target.value)}
+                  placeholder="Contoh: client@default.com atau email staf"
+                  className="w-full px-4 py-3 bg-slate-50 border border-slate-300 rounded-xl text-sm font-medium text-slate-900 focus:outline-none focus:ring-2 focus:ring-orange-500 font-bold"
+                />
+                <span className="text-[10px] text-slate-400 mt-1 block">Masukkan email yang didaftarkan Super Admin (kosongkan jika menggunakan password demo standar).</span>
+              </div>
+            )}
+
             <div>
               <div className="flex items-center justify-between mb-1.5">
                 <label className="text-xs font-extrabold text-slate-700 flex items-center gap-1.5">

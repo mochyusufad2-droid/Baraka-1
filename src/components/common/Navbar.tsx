@@ -16,7 +16,8 @@ import {
   Key,
   RefreshCw,
   WifiOff,
-  AlertCircle
+  AlertCircle,
+  Building2
 } from 'lucide-react';
 import { useRace } from '../../context/RaceContext';
 
@@ -28,6 +29,7 @@ export type ActiveView =
   | 'participant' 
   | 'judge' 
   | 'leaderboard'
+  | 'super-admin'
   | 'login';
 
 interface NavbarProps {
@@ -74,6 +76,7 @@ export const Navbar: React.FC<NavbarProps> = ({
 
   const navItems: { id: ActiveView; label: string; icon: React.ReactNode; badge?: string; requiresRole?: 'organizer' | 'judge' }[] = [
     { id: 'landing', label: 'Beranda', icon: <Home className="w-4 h-4" /> },
+    { id: 'super-admin', label: 'Super Admin', icon: <Building2 className="w-4 h-4 text-orange-400" />, badge: 'SaaS' },
     { id: 'login', label: 'Login Staf', icon: <Key className="w-4 h-4 text-orange-400" /> },
     { id: 'organizer', label: 'Organizer Hub', icon: <LayoutDashboard className="w-4 h-4" />, badge: '8 Menu', requiresRole: 'organizer' },
     { id: 'event-list', label: 'Daftar Event', icon: <Calendar className="w-4 h-4" /> },

@@ -75,7 +75,7 @@ export const BatchBibPrintModal: React.FC<BatchBibPrintModalProps> = ({
       const generated: Record<string, string> = {};
       for (const t of teams) {
         try {
-          const qrText = `BIB:${t.bibNumber}|PIN:${t.pinCode}|TIM:${t.name}`;
+          const qrText = `BIB:${t.bibNumber}|PIN:${(t as any).pinCode || '****'}|TIM:${t.name}`;
           const url = await QRCode.toDataURL(qrText, {
             width: 320,
             margin: 1,
@@ -165,7 +165,7 @@ export const BatchBibPrintModal: React.FC<BatchBibPrintModalProps> = ({
   const handleCopyManifest = () => {
     if (teamsToPrint.length === 0) return;
     const text = teamsToPrint
-      .map((t, idx) => `${idx + 1}. [BIB ${t.bibNumber}] ${t.name} (PIN: ${t.pinCode}) - ${t.category} - Anggota: ${t.members.map(m => m.name).join(', ')}`)
+      .map((t, idx) => `${idx + 1}. [BIB ${t.bibNumber}] ${t.name} (PIN: ${(t as any).pinCode || '****'}) - ${t.category} - Anggota: ${t.members.map(m => m.name).join(', ')}`)
       .join('\n');
     navigator.clipboard.writeText(text);
     setIsCopied(true);
@@ -182,7 +182,7 @@ export const BatchBibPrintModal: React.FC<BatchBibPrintModalProps> = ({
       `"${t.bibNumber}"`,
       `"${t.name.replace(/"/g, '""')}"`,
       `"${t.category.replace(/"/g, '""')}"`,
-      `"${t.pinCode}"`,
+      `"${(t as any).pinCode || '****'}"`,
       t.members.length,
       `"${(t.members[0]?.name || '').replace(/"/g, '""')}"`,
       `"${t.members.map(m => `${m.name} (${m.role})`).join('; ').replace(/"/g, '""')}"`
@@ -544,7 +544,7 @@ export const BatchBibPrintModal: React.FC<BatchBibPrintModalProps> = ({
                               </h5>
                               {showPin && (
                                 <div className="text-xs text-slate-600 font-mono">
-                                  PIN HP: <strong className="text-slate-900 font-bold">{t.pinCode}</strong>
+                                  PIN HP: <strong className="text-slate-900 font-bold">{(t as any).pinCode || '****'}</strong>
                                 </div>
                               )}
                             </div>
@@ -688,7 +688,7 @@ export const BatchBibPrintModal: React.FC<BatchBibPrintModalProps> = ({
                     </div>
                     {showPin && (
                       <div style={{ fontSize: '11pt', fontFamily: 'monospace', marginTop: '1mm' }}>
-                        PIN LOGIN: <strong>{t.pinCode}</strong>
+                        PIN LOGIN: <strong>{(t as any).pinCode || '****'}</strong>
                       </div>
                     )}
                   </div>
